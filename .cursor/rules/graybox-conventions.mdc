@@ -1,0 +1,40 @@
+---
+description: Graybox Level Editor 코딩 규칙 및 아키텍처 가이드
+alwaysApply: true
+---
+
+# Graybox Editor Conventions
+
+## Architecture
+
+- **Single responsibility**: one file = one concern. Never mix UI rendering with 3D logic or file I/O.
+- **Store slices** live in `src/store/` — `editorStore`, `objectStore`, `selectionStore`, `toolStore`.
+- **Three.js modules** live in `src/three/` — each has a `create___()` factory function.
+- **Shared styles** live in `src/styles/theme.ts`. Never define button/input styles inline per-component.
+- **Constants** live in `src/constants.ts`. Never hardcode colors, thresholds, or sizes.
+
+## Object Mutations & Undo
+
+- ALL object changes must go through the Command pattern (undo/redo stack).
+- For continuous drags (gizmo, extrude), use `beginBatch()` / `commitBatch()` to group into one undo step.
+- `updateObject` is the low-level setter; always wrap it in a Command for undoable operations.
+
+## Adding a New Primitive
+
+1. Add the type to `PrimitiveType` in `src/types.ts`
+2. Add geometry creation in `src/three/primitiveGeometry.ts`
+3. Add the name mapping in `src/utils/naming.ts`
+4. Add palette button in `src/components/PrimitivePalette.tsx`
+
+## Exports
+
+- All 3D export logic (GLTF, OBJ, FBX) lives in `src/three/exporters.ts`.
+- Download helper lives in `src/utils/download.ts` — no duplicates.
+- Export always uses the live viewport scene (clone meshes), never reconstructs geometry.
+
+## Code Style
+
+- No inline `style={{}}` — use shared style objects from `src/styles/theme.ts`.
+- No magic numbers — import from `src/constants.ts`.
+- No `as any` — use proper typing or explicit casts with comments.
+- Respond in Korean to the user.
