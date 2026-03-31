@@ -19,14 +19,14 @@ export function renderDrawingPreview(
       depthTest: false,
     });
     const dot = new THREE.Mesh(dotGeo, dotMat);
-    dot.position.set(v.x, 0.02, v.z);
+    dot.position.set(v.x, (v.y ?? 0) + 0.02, v.z);
     if (isFirst) dot.scale.setScalar(1.5);
     dot.renderOrder = 999;
     drawGroup.add(dot);
   }
 
   if (verts.length >= 2) {
-    const pts = verts.map((v) => new THREE.Vector3(v.x, 0.01, v.z));
+    const pts = verts.map((v) => new THREE.Vector3(v.x, (v.y ?? 0) + 0.01, v.z));
     const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
     const lineMat = new THREE.LineBasicMaterial({ color: SCENE_COLORS.drawLine, depthTest: false });
     const line = new THREE.Line(lineGeo, lineMat);
@@ -36,7 +36,9 @@ export function renderDrawingPreview(
 
   if (cursorPt && verts.length > 0) {
     const last = verts[verts.length - 1];
-    const previewPts = [new THREE.Vector3(last.x, 0.01, last.z), new THREE.Vector3(cursorPt.x, 0.01, cursorPt.z)];
+    const ly = (last.y ?? 0) + 0.01;
+    const cy = (cursorPt.y ?? 0) + 0.01;
+    const previewPts = [new THREE.Vector3(last.x, ly, last.z), new THREE.Vector3(cursorPt.x, cy, cursorPt.z)];
     const pGeo = new THREE.BufferGeometry().setFromPoints(previewPts);
     const dashed = new THREE.LineDashedMaterial({
       color: SCENE_COLORS.drawLine, dashSize: 0.15, gapSize: 0.1,
@@ -48,7 +50,8 @@ export function renderDrawingPreview(
     drawGroup.add(pLine);
 
     if (verts.length >= 3) {
-      const closePts = [new THREE.Vector3(cursorPt.x, 0.01, cursorPt.z), new THREE.Vector3(verts[0].x, 0.01, verts[0].z)];
+      const fy = (verts[0].y ?? 0) + 0.01;
+      const closePts = [new THREE.Vector3(cursorPt.x, cy, cursorPt.z), new THREE.Vector3(verts[0].x, fy, verts[0].z)];
       const cGeo = new THREE.BufferGeometry().setFromPoints(closePts);
       const cMat = new THREE.LineDashedMaterial({
         color: SCENE_COLORS.drawClose, dashSize: 0.1, gapSize: 0.1,
@@ -64,7 +67,7 @@ export function renderDrawingPreview(
       color: SCENE_COLORS.drawLine, depthTest: false, transparent: true, opacity: 0.6,
     });
     const curDot = new THREE.Mesh(dotGeo, curDotMat);
-    curDot.position.set(cursorPt.x, 0.02, cursorPt.z);
+    curDot.position.set(cursorPt.x, (cursorPt.y ?? 0) + 0.02, cursorPt.z);
     curDot.renderOrder = 999;
     drawGroup.add(curDot);
   }

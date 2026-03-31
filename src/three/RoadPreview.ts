@@ -18,19 +18,19 @@ export function renderRoadPreview(
     const v = roadVerts[i];
     const mat = new THREE.MeshBasicMaterial({ color: SCENE_COLORS.roadPreview, depthTest: false });
     const dot = new THREE.Mesh(dotGeo, mat);
-    dot.position.set(v.x, 0.02, v.z);
+    dot.position.set(v.x, (v.y ?? 0) + 0.02, v.z);
     dot.scale.setScalar(i === 0 ? 1.5 : 1);
     dot.renderOrder = 999;
     drawGroup.add(dot);
   }
 
   if (allPts.length >= 2) {
-    const pts3 = allPts.map((v) => new THREE.Vector3(v.x, 0, v.z));
+    const pts3 = allPts.map((v) => new THREE.Vector3(v.x, v.y ?? 0, v.z));
     const curve = new THREE.CatmullRomCurve3(pts3, false, 'catmullrom', 0.5);
     const segCount = Math.max(2, (allPts.length - 1) * EDITOR.roadSegmentsPerPoint);
     const samples = curve.getPoints(segCount);
 
-    const centerPts = samples.map((p) => new THREE.Vector3(p.x, 0.01, p.z));
+    const centerPts = samples.map((p) => new THREE.Vector3(p.x, p.y + 0.01, p.z));
     const centerGeo = new THREE.BufferGeometry().setFromPoints(centerPts);
     const centerMat = new THREE.LineBasicMaterial({ color: SCENE_COLORS.roadPreview, depthTest: false });
     const centerLine = new THREE.Line(centerGeo, centerMat);
@@ -45,9 +45,10 @@ export function renderRoadPreview(
       let tangent: THREE.Vector3;
       if (i < samples.length - 1) tangent = new THREE.Vector3().subVectors(samples[i + 1], p).normalize();
       else tangent = new THREE.Vector3().subVectors(p, samples[i - 1]).normalize();
-      const normal = new THREE.Vector3(-tangent.z, 0, tangent.x);
-      leftPts.push(new THREE.Vector3().copy(p).addScaledVector(normal, halfW).setY(0.01));
-      rightPts.push(new THREE.Vector3().copy(p).addScaledVector(normal, -halfW).setY(0.01));
+      const flatTangent = new THREE.Vector3(tangent.x, 0, tangent.z).normalize();
+      const normal = new THREE.Vector3(-flatTangent.z, 0, flatTangent.x);
+      leftPts.push(new THREE.Vector3().copy(p).addScaledVector(normal, halfW).setY(p.y + 0.01));
+      rightPts.push(new THREE.Vector3().copy(p).addScaledVector(normal, -halfW).setY(p.y + 0.01));
     }
 
     const leftGeo = new THREE.BufferGeometry().setFromPoints(leftPts);
@@ -73,7 +74,7 @@ export function renderRoadPreview(
       color: SCENE_COLORS.roadPreview, depthTest: false, transparent: true, opacity: 0.6,
     });
     const curDot = new THREE.Mesh(dotGeo, curDotMat);
-    curDot.position.set(cursorPt.x, 0.02, cursorPt.z);
+    curDot.position.set(cursorPt.x, (cursorPt.y ?? 0) + 0.02, cursorPt.z);
     curDot.renderOrder = 999;
     drawGroup.add(curDot);
   }

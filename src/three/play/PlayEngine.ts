@@ -44,7 +44,7 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
     if (e.key === 'v' || e.key === 'V') {
       useEditor.getState().togglePlayCameraMode();
     }
-    if (mode === '1st') e.preventDefault();
+    if (mode === 'back') e.preventDefault();
   }
 
   function onKeyUp(e: KeyboardEvent) {
@@ -63,42 +63,48 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
     }
   }
 
+  let rightMouseDown = false;
+
   function onMouseMove(e: MouseEvent) {
     if (!active || !cameraRig) return;
     const mode = useEditor.getState().playCameraMode;
-    if (mode === '1st' && document.pointerLockElement === ctx.renderer.domElement) {
+    if (mode === 'back' && rightMouseDown) {
       cameraRig.onMouseMove(e.movementX, e.movementY);
     }
+  }
+
+  function onPointerDown(e: PointerEvent) {
+    if (!active) return;
+    if (e.button === 2) rightMouseDown = true;
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    if (e.button === 2) rightMouseDown = false;
   }
 
   function onClick(e: MouseEvent) {
     if (!active || !player || !cameraRig) return;
     const mode = useEditor.getState().playCameraMode;
 
-    if (mode === '1st') {
-      if (document.pointerLockElement !== ctx.renderer.domElement) {
-        ctx.renderer.domElement.requestPointerLock();
-      }
-      return;
-    }
-
     const rect = ctx.renderer.domElement.getBoundingClientRect();
     pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
-    raycaster.setFromCamera(pointer, cameraRig.camera);
-    const hits = raycaster.intersectObject(ctx.groundPlane);
-    if (hits.length > 0) {
-      player.setNavTarget(hits[0].point);
+    if (mode === 'back' || mode === '3rd' || mode === 'iso') {
+      raycaster.setFromCamera(pointer, cameraRig.camera);
+      const hits = raycaster.intersectObject(ctx.groundPlane);
+      if (hits.length > 0) {
+        player.setNavTarget(hits[0].point);
+      }
     }
   }
 
   function onWheel(e: WheelEvent) {
     if (!active || !cameraRig) return;
     const mode = useEditor.getState().playCameraMode;
-    if (mode === '3rd') {
+    if (mode === '3rd' || mode === 'iso' || mode === 'back') {
       e.preventDefault();
-      cameraRig.onWheel(e.deltaY);
+      cameraRig.onWheel(e.deltaY, mode);
     }
   }
 
@@ -107,11 +113,7 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
   }
 
   function onPointerLockChange() {
-    if (!active) return;
-    const mode = useEditor.getState().playCameraMode;
-    if (mode === '1st' && document.pointerLockElement !== ctx.renderer.domElement) {
-      // pointer lock lost -- ok, user can click to re-lock
-    }
+    // no-op: back mode doesn't use pointer lock
   }
 
   function enter() {
@@ -123,7 +125,8 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
     (ctx.transformControls as unknown as THREE.Object3D).visible = false;
 
     const meshes = Array.from(ctx.meshMap.values()).filter((m) => m.visible);
-    physics = createPhysicsWorld(meshes);
+    const objects = useEditor.getState().objects;
+    physics = createPhysicsWorld(meshes, objects);
     player = createPlayerController(ctx.scene);
     cameraRig = createCameraRig();
 
@@ -140,6 +143,8 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
     ctx.renderer.domElement.addEventListener('click', onClick);
     ctx.renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
     ctx.renderer.domElement.addEventListener('contextmenu', onContextMenu);
+    ctx.renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointerup', onPointerUp);
     document.addEventListener('pointerlockchange', onPointerLockChange);
 
     lastTime = performance.now();
@@ -161,6 +166,8 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
     ctx.renderer.domElement.removeEventListener('click', onClick);
     ctx.renderer.domElement.removeEventListener('wheel', onWheel);
     ctx.renderer.domElement.removeEventListener('contextmenu', onContextMenu);
+    ctx.renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+    window.removeEventListener('pointerup', onPointerUp);
     document.removeEventListener('pointerlockchange', onPointerLockChange);
 
     if (player) { player.dispose(); player = null; }
@@ -195,12 +202,13 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
     player.update(dt, keys, cameraRig.yaw, mode, physics);
     cameraRig.update(dt, player.position, mode);
 
-    player.mesh.visible = mode === '3rd';
+    player.mesh.visible = true;
 
     const rect = ctx.renderer.domElement.getBoundingClientRect();
     cameraRig.resize(rect.width, rect.height);
 
     ctx.renderer.render(ctx.scene, cameraRig.camera);
+    ctx.labelRenderer.render(ctx.scene, cameraRig.camera);
   }
 
   function dispose() {

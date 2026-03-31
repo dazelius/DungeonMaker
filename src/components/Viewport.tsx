@@ -33,7 +33,11 @@ export function Viewport() {
       if (state.drawingPolygon && state.drawVertices.length >= 3) { state.finishDrawing(); return; }
     }
     if (e.key === 'Delete' || e.key === 'Backspace') state.removeSelected();
-    if (e.key === 'q' || e.key === 'Q') { state.toggleTopView(); return; }
+    if (e.key === 'q' || e.key === 'Q') {
+      const cycle: Record<string, string> = { perspective: 'top', top: 'iso', iso: 'perspective' };
+      state.setViewMode((cycle[state.viewMode] ?? 'perspective') as any);
+      return;
+    }
     if (e.key === 't' || e.key === 'T') {
       const sel = state.getSelected();
       if (sel && input) {

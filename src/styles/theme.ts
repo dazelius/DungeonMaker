@@ -21,7 +21,7 @@ export const btn = {
   measure: { ...btnBase, background: '#ea580c', color: '#fff' } as React.CSSProperties,
   measureOff: { ...btnBase, background: '#383838', color: '#888' } as React.CSSProperties,
   extrude: { ...btnBase, background: '#d97706', color: '#fff' } as React.CSSProperties,
-  topView: { ...btnBase, background: '#7c3aed', color: '#fff' } as React.CSSProperties,
+  viewActive: { ...btnBase, background: '#7c3aed', color: '#fff' } as React.CSSProperties,
   exportGreen: { ...btnBase, background: '#047857', color: '#fff' } as React.CSSProperties,
   exportTeal: { ...btnBase, background: '#0f766e', color: '#fff' } as React.CSSProperties,
   danger: { ...btnBase, background: '#7f1d1d', color: '#fca5a5' } as React.CSSProperties,

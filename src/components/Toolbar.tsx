@@ -17,7 +17,7 @@ export function Toolbar() {
   const undoStack = useEditor((s) => s.undoStack);
   const redoStack = useEditor((s) => s.redoStack);
   const extruding = useEditor((s) => s.extruding);
-  const topView = useEditor((s) => s.topView);
+  const viewMode = useEditor((s) => s.viewMode);
   const playMode = useEditor((s) => s.playMode);
   const playCameraMode = useEditor((s) => s.playCameraMode);
   const selectedObj = useEditor((s) => {
@@ -25,7 +25,9 @@ export function Toolbar() {
     return pid ? s.objects.find((o) => o.id === pid) : undefined;
   });
   const chatOpen = useEditor((s) => s.chatOpen);
-  const { setTransformMode, toggleSnap, toggleMeasurements, setGridSize, undo, redo, startExtruding, toggleTopView, enterPlayMode, exitPlayMode, togglePlayCameraMode, toggleChat } = useEditor.getState();
+  const floorY = useEditor((s) => s.floorY);
+  const floorIsolate = useEditor((s) => s.floorIsolate);
+  const { setTransformMode, toggleSnap, toggleMeasurements, setGridSize, setFloorY, floorUp, floorDown, toggleFloorIsolate, undo, redo, startExtruding, setViewMode, enterPlayMode, exitPlayMode, togglePlayCameraMode, toggleChat } = useEditor.getState();
 
   return (
     <header style={panel.toolbar}>
@@ -46,13 +48,29 @@ export function Toolbar() {
             ))}
           </div>
 
-          <button
-            onClick={toggleTopView}
-            style={topView ? btn.topView : btn.off}
-            title="Top View (Q) — 2D drawing mode"
-          >
-            ⊞ Top
-          </button>
+          <div style={{ display: 'flex', gap: 2, marginRight: 4 }}>
+            <button
+              onClick={() => setViewMode('perspective')}
+              style={viewMode === 'perspective' ? btn.viewActive : btn.off}
+              title="Perspective View (Q to cycle)"
+            >
+              3D
+            </button>
+            <button
+              onClick={() => setViewMode('top')}
+              style={viewMode === 'top' ? btn.viewActive : btn.off}
+              title="Top View (Q to cycle)"
+            >
+              Top
+            </button>
+            <button
+              onClick={() => setViewMode('iso')}
+              style={viewMode === 'iso' ? btn.viewActive : btn.off}
+              title="Isometric View (Q to cycle)"
+            >
+              Iso
+            </button>
+          </div>
 
           {selectedObj && (
             <button
@@ -89,6 +107,27 @@ export function Toolbar() {
             />
           </div>
 
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginRight: 8 }}>
+            <span style={{ fontSize: 10, color: '#999', whiteSpace: 'nowrap' }}>Floor</span>
+            <button onClick={floorDown} style={btn.snapOff} title="Floor down 1m">-</button>
+            <input
+              type="number"
+              value={floorY}
+              step={1}
+              onChange={(e) => setFloorY(parseFloat(e.target.value) || 0)}
+              style={{ ...input.number, width: 40 }}
+              title="Floor Y height"
+            />
+            <button onClick={floorUp} style={btn.snapOff} title="Floor up 1m">+</button>
+            <button
+              onClick={toggleFloorIsolate}
+              style={floorIsolate ? { ...btn.snapOff, background: '#7c3aed', color: '#fff' } : btn.snapOff}
+              title="Isolate current floor (fade other floors)"
+            >
+              Iso
+            </button>
+          </div>
+
           <button onClick={toggleMeasurements} style={showMeasurements ? btn.measure : btn.measureOff} title="Toggle measurement guides">
             Measure
           </button>
@@ -105,16 +144,23 @@ export function Toolbar() {
           <button
             onClick={togglePlayCameraMode}
             style={playCameraMode === '3rd' ? btn.camMode : btn.camModeOff}
-            title="3rd person quarter view (V to toggle)"
+            title="3rd person quarter view (V to cycle)"
           >
             3rd Person
           </button>
           <button
             onClick={togglePlayCameraMode}
-            style={playCameraMode === '1st' ? btn.camMode : btn.camModeOff}
-            title="1st person FPS (V to toggle)"
+            style={playCameraMode === 'back' ? btn.camMode : btn.camModeOff}
+            title="3rd person back view (V to cycle)"
           >
-            1st Person
+            Back View
+          </button>
+          <button
+            onClick={togglePlayCameraMode}
+            style={playCameraMode === 'iso' ? btn.camMode : btn.camModeOff}
+            title="Isometric view (V to cycle)"
+          >
+            Iso
           </button>
         </div>
       )}
@@ -147,21 +193,21 @@ export function Toolbar() {
 function ExportMenu() {
   const projectName = useEditor((s) => s.projectName);
 
-  const handleExport = async (format: 'glb' | 'gltf' | 'obj' | 'json') => {
+  const handleExport = async (format: 'glb' | 'gltf' | 'obj' | 'fbx' | 'json') => {
     const { downloadBlob } = await import('../utils/download');
     if (format === 'json') {
       const json = useEditor.getState().exportProjectJson();
       downloadBlob(new Blob([json], { type: 'application/json' }), `${projectName}.json`);
       return;
     }
-    const { exportGLTF, exportOBJ } = await import('../three/exporters');
-    const { getViewportScene } = await import('../three/exporters');
+    const { exportGLTF, exportOBJ, exportFBX, getViewportScene } = await import('../three/exporters');
     const scene = getViewportScene();
     if (!scene) return;
 
     if (format === 'glb') await exportGLTF(scene, `${projectName}.glb`, true);
     else if (format === 'gltf') await exportGLTF(scene, `${projectName}.gltf`, false);
     else if (format === 'obj') exportOBJ(scene, `${projectName}.obj`);
+    else if (format === 'fbx') exportFBX(scene, `${projectName}.fbx`);
   };
 
   const handleLoad = () => {
@@ -187,6 +233,7 @@ function ExportMenu() {
       <button onClick={() => handleExport('glb')} style={btn.exportGreen}>GLB</button>
       <button onClick={() => handleExport('gltf')} style={btn.exportGreen}>glTF</button>
       <button onClick={() => handleExport('obj')} style={btn.exportTeal}>OBJ</button>
+      <button onClick={() => handleExport('fbx')} style={btn.exportTeal}>FBX</button>
     </div>
   );
 }

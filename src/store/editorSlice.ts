@@ -1,15 +1,17 @@
 import type { StateCreator } from 'zustand';
-import type { TransformMode, PlayCameraMode } from '../types';
+import type { TransformMode, PlayCameraMode, ViewMode } from '../types';
 import type { EditorState } from './types';
 import { EDITOR } from '../constants';
 
 export interface EditorSlice {
   projectName: string;
   gridSize: number;
+  floorY: number;
+  floorIsolate: boolean;
   snapEnabled: boolean;
   showMeasurements: boolean;
   transformMode: TransformMode;
-  topView: boolean;
+  viewMode: ViewMode;
   playMode: boolean;
   playCameraMode: PlayCameraMode;
   editingVertices: boolean;
@@ -17,10 +19,14 @@ export interface EditorSlice {
 
   setProjectName: (n: string) => void;
   setGridSize: (s: number) => void;
+  setFloorY: (y: number) => void;
+  floorUp: () => void;
+  floorDown: () => void;
+  toggleFloorIsolate: () => void;
   toggleSnap: () => void;
   toggleMeasurements: () => void;
   setTransformMode: (m: TransformMode) => void;
-  toggleTopView: () => void;
+  setViewMode: (m: ViewMode) => void;
   enterVertexEdit: () => void;
   exitVertexEdit: () => void;
   toggleChat: () => void;
@@ -32,10 +38,12 @@ export interface EditorSlice {
 export const createEditorSlice: StateCreator<EditorState, [], [], EditorSlice> = (set, get) => ({
   projectName: 'Untitled Level',
   gridSize: EDITOR.defaultGridSize,
+  floorY: 0,
+  floorIsolate: false,
   snapEnabled: true,
   showMeasurements: false,
   transformMode: 'select',
-  topView: false,
+  viewMode: 'perspective' as ViewMode,
   playMode: false,
   playCameraMode: '3rd',
   editingVertices: false,
@@ -43,10 +51,14 @@ export const createEditorSlice: StateCreator<EditorState, [], [], EditorSlice> =
 
   setProjectName: (n) => set({ projectName: n }),
   setGridSize: (s) => set({ gridSize: Math.max(EDITOR.minGridSize, s) }),
+  setFloorY: (y) => set({ floorY: Math.round(y) }),
+  floorUp: () => set((s) => ({ floorY: s.floorY + 1 })),
+  floorDown: () => set((s) => ({ floorY: s.floorY - 1 })),
+  toggleFloorIsolate: () => set((s) => ({ floorIsolate: !s.floorIsolate })),
   toggleSnap: () => set((s) => ({ snapEnabled: !s.snapEnabled })),
   toggleMeasurements: () => set((s) => ({ showMeasurements: !s.showMeasurements })),
   setTransformMode: (m) => set({ transformMode: m }),
-  toggleTopView: () => set((s) => ({ topView: !s.topView })),
+  setViewMode: (m) => set({ viewMode: m }),
 
   enterVertexEdit: () => {
     const s = get();
@@ -73,10 +85,11 @@ export const createEditorSlice: StateCreator<EditorState, [], [], EditorSlice> =
     if (s.drawingWallEdge) s.cancelWallEdgeDrawing();
     if (s.placingType) s.cancelPlacing();
     if (s.editingVertices) set({ editingVertices: false });
-    set({ playMode: true, topView: false });
+    set({ playMode: true, viewMode: 'perspective' as ViewMode, floorIsolate: false });
   },
   exitPlayMode: () => set({ playMode: false }),
-  togglePlayCameraMode: () => set((s) => ({
-    playCameraMode: s.playCameraMode === '3rd' ? '1st' : '3rd',
-  })),
+  togglePlayCameraMode: () => set((s) => {
+    const cycle: Record<string, PlayCameraMode> = { '3rd': 'back', 'back': 'iso', 'iso': '3rd' };
+    return { playCameraMode: cycle[s.playCameraMode] ?? '3rd' };
+  }),
 });

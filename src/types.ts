@@ -1,8 +1,10 @@
-export type PrimitiveType = 'box' | 'cylinder' | 'stairs' | 'sphere' | 'plane' | 'polygon' | 'road' | 'wall';
+export type PrimitiveType = 'box' | 'cylinder' | 'stairs' | 'sphere' | 'plane' | 'polygon' | 'road' | 'wall' | 'ramp' | 'cliff' | 'trim';
 
 export type TransformMode = 'select' | 'translate' | 'rotate' | 'scale';
 
-export type PlayCameraMode = '3rd' | '1st';
+export type PlayCameraMode = '3rd' | 'back' | 'iso';
+
+export type ViewMode = 'perspective' | 'top' | 'iso';
 
 export interface Vec3 {
   x: number;
@@ -24,12 +26,20 @@ export interface LevelObject {
   roadWidth?: number;
   wallHeight?: number;
   wallThickness?: number;
+  rampHeight?: number;
+  rampWidth?: number;
+  cliffHeight?: number;
+  cliffThickness?: number;
+  trimHeight?: number;
+  trimThickness?: number;
+  groupId?: string;
 }
 
 export interface LevelProject {
   name: string;
   gridSize: number;
   objects: LevelObject[];
+  groupNames?: Record<string, string>;
 }
 
 export interface Command {

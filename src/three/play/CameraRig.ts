@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { PLAY } from '../../constants';
+import type { PlayCameraMode } from '../../types';
+
+const ISO_CAM_YAW = Math.PI / 4;
+const ISO_ELEV = Math.atan(1 / Math.sqrt(2));
 
 export interface CameraRig {
   camera: THREE.PerspectiveCamera;
@@ -7,8 +11,8 @@ export interface CameraRig {
   pitch: number;
 
   onMouseMove(dx: number, dy: number): void;
-  onWheel(deltaY: number): void;
-  update(dt: number, playerPos: THREE.Vector3, mode: '3rd' | '1st'): void;
+  onWheel(deltaY: number, mode: PlayCameraMode): void;
+  update(dt: number, playerPos: THREE.Vector3, mode: PlayCameraMode): void;
   resize(w: number, h: number): void;
 }
 
@@ -18,6 +22,7 @@ export function createCameraRig(): CameraRig {
   let yaw = Math.PI;
   let pitch = -Math.PI * 0.15;
   let thirdDist: number = PLAY.thirdPersonDist;
+  let isoDist: number = PLAY.thirdPersonDist;
 
   const _target = new THREE.Vector3();
   const _offset = new THREE.Vector3();
@@ -28,20 +33,43 @@ export function createCameraRig(): CameraRig {
     pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, pitch));
   }
 
-  function onWheel(deltaY: number) {
-    thirdDist += deltaY * 0.01;
-    thirdDist = Math.max(2, Math.min(20, thirdDist));
+  function onWheel(deltaY: number, mode: PlayCameraMode) {
+    if (mode === 'iso') {
+      isoDist += deltaY * 0.01;
+      isoDist = Math.max(3, Math.min(30, isoDist));
+    } else if (mode === 'back') {
+      backDist += deltaY * 0.01;
+      backDist = Math.max(2, Math.min(12, backDist));
+    } else {
+      thirdDist += deltaY * 0.01;
+      thirdDist = Math.max(2, Math.min(20, thirdDist));
+    }
   }
 
-  function update(dt: number, playerPos: THREE.Vector3, mode: '3rd' | '1st') {
-    if (mode === '1st') {
-      _target.set(playerPos.x, playerPos.y + PLAY.eyeHeight, playerPos.z);
-      camera.position.copy(_target);
+  let backDist = 4;
 
-      const lookX = Math.sin(yaw) * Math.cos(pitch);
-      const lookY = Math.sin(pitch);
-      const lookZ = Math.cos(yaw) * Math.cos(pitch);
-      camera.lookAt(_target.x + lookX, _target.y + lookY, _target.z + lookZ);
+  function update(dt: number, playerPos: THREE.Vector3, mode: PlayCameraMode) {
+    if (mode === 'back') {
+      const backHeight = 2.2;
+      _target.set(playerPos.x, playerPos.y + PLAY.playerHeight * 0.6, playerPos.z);
+      _offset.set(
+        -Math.sin(yaw) * backDist,
+        backHeight,
+        -Math.cos(yaw) * backDist,
+      );
+      const desiredPos = _target.clone().add(_offset);
+      camera.position.lerp(desiredPos, 1 - Math.pow(0.005, dt));
+      camera.lookAt(_target);
+    } else if (mode === 'iso') {
+      _target.set(playerPos.x, playerPos.y + PLAY.playerHeight * 0.5, playerPos.z);
+      _offset.set(
+        Math.sin(ISO_CAM_YAW) * Math.cos(ISO_ELEV) * isoDist,
+        Math.sin(ISO_ELEV) * isoDist,
+        Math.cos(ISO_CAM_YAW) * Math.cos(ISO_ELEV) * isoDist,
+      );
+      const desiredPos = _target.clone().add(_offset);
+      camera.position.lerp(desiredPos, 1 - Math.pow(0.01, dt));
+      camera.lookAt(_target);
     } else {
       const angleRad = THREE.MathUtils.degToRad(PLAY.thirdPersonAngle);
       _offset.set(

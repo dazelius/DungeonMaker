@@ -9,6 +9,9 @@ const PRIM_LABELS: Record<PrimitiveType, string> = {
   polygon: 'Polygon',
   road: 'Road',
   wall: 'Wall',
+  ramp: 'Ramp',
+  cliff: 'Cliff',
+  trim: 'Trim',
 };
 
 const counts: Record<string, number> = {};

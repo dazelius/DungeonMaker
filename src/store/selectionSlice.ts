@@ -5,7 +5,7 @@ import type { EditorState } from './types';
 export interface SelectionSlice {
   selectedIds: string[];
 
-  select: (id: string | null, additive?: boolean) => void;
+  select: (id: string | null, additive?: boolean, isolate?: boolean) => void;
   selectMultiple: (ids: string[]) => void;
   selectAll: () => void;
   primarySelectedId: () => string | null;
@@ -15,9 +15,10 @@ export interface SelectionSlice {
 export const createSelectionSlice: StateCreator<EditorState, [], [], SelectionSlice> = (set, get) => ({
   selectedIds: [],
 
-  select: (id, additive = false) => {
+  select: (id, additive = false, isolate = false) => {
     const wasEditing = get().editingVertices;
     if (!id) { set({ selectedIds: [], ...(wasEditing ? { editingVertices: false } : {}) }); return; }
+
     if (additive) {
       set((s) => {
         const cur = s.selectedIds;
@@ -25,9 +26,17 @@ export const createSelectionSlice: StateCreator<EditorState, [], [], SelectionSl
         return { selectedIds: [...cur, id], ...(wasEditing ? { editingVertices: false } : {}) };
       });
     } else {
-      const cur = get().selectedIds;
-      const same = cur.length === 1 && cur[0] === id;
-      set({ selectedIds: [id], ...(wasEditing && !same ? { editingVertices: false } : {}) });
+      const obj = get().objects.find((o) => o.id === id);
+      if (obj?.groupId && !isolate) {
+        const groupIds = get().objects.filter((o) => o.groupId === obj.groupId).map((o) => o.id);
+        const cur = get().selectedIds;
+        const sameGroup = cur.length === groupIds.length && groupIds.every((gid) => cur.includes(gid));
+        set({ selectedIds: groupIds, ...(wasEditing && !sameGroup ? { editingVertices: false } : {}) });
+      } else {
+        const cur = get().selectedIds;
+        const same = cur.length === 1 && cur[0] === id;
+        set({ selectedIds: [id], ...(wasEditing && !same ? { editingVertices: false } : {}) });
+      }
     }
   },
 

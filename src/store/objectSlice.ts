@@ -9,8 +9,9 @@ export interface ObjectSlice {
   objects: LevelObject[];
   undoStack: Command[];
   redoStack: Command[];
-  _batchSnapshot: LevelObject | null;
+  _batchSnapshots: LevelObject[];
   _streamedIds: string[];
+  groupNames: Record<string, string>;
 
   addObject: (type: PrimitiveType) => string;
   removeObject: (id: string) => void;
@@ -26,11 +27,14 @@ export interface ObjectSlice {
   streamAddObject: (obj: LevelObject) => void;
   finalizeStream: (removeIds?: string[]) => void;
 
+  createGroup: (name: string, objectIds: string[]) => string;
+  dissolveGroup: (groupId: string) => void;
+
   pushCommand: (cmd: Command) => void;
   undo: () => void;
   redo: () => void;
 
-  loadProject: (data: { name: string; gridSize: number; objects: LevelObject[] }) => void;
+  loadProject: (data: { name: string; gridSize: number; objects: LevelObject[]; groupNames?: Record<string, string> }) => void;
   exportProjectJson: () => string;
 }
 
@@ -50,12 +54,17 @@ function makeObject(type: PrimitiveType, pos: Vec3): LevelObject {
   };
 }
 
+function snapshotObj(o: LevelObject): LevelObject {
+  return { ...o, vertices: o.vertices ? [...o.vertices] : undefined };
+}
+
 export const createObjectSlice: StateCreator<EditorState, [], [], ObjectSlice> = (set, get) => ({
   objects: [],
   undoStack: [],
   redoStack: [],
-  _batchSnapshot: null,
+  _batchSnapshots: [],
   _streamedIds: [],
+  groupNames: {},
 
   addObject: (type) => {
     const obj = makeObject(type, { x: 0, y: 0, z: 0 });
@@ -144,7 +153,7 @@ export const createObjectSlice: StateCreator<EditorState, [], [], ObjectSlice> =
   streamAddObject: (obj) => {
     set((s) => ({
       objects: [...s.objects.filter((o) => o.id !== obj.id), obj],
-      _streamedIds: [...s._streamedIds, obj.id],
+      _streamedIds: [...new Set([...s._streamedIds, obj.id])],
     }));
   },
 
@@ -179,35 +188,71 @@ export const createObjectSlice: StateCreator<EditorState, [], [], ObjectSlice> =
     set({ _streamedIds: [], selectedIds: streamedIds });
   },
 
+  /* --- batch: snapshots all group members for undo --- */
+
   beginBatch: (id) => {
     const obj = get().objects.find((o) => o.id === id);
-    if (obj) set({ _batchSnapshot: { ...obj, vertices: obj.vertices ? [...obj.vertices] : undefined } });
+    if (!obj) return;
+    let targets: LevelObject[];
+    if (obj.groupId) {
+      targets = get().objects.filter((o) => o.groupId === obj.groupId);
+    } else {
+      targets = [obj];
+    }
+    set({ _batchSnapshots: targets.map(snapshotObj) });
   },
 
   commitBatch: () => {
-    const snap = get()._batchSnapshot;
-    if (!snap) return;
-    const current = get().objects.find((o) => o.id === snap.id);
-    if (!current) { set({ _batchSnapshot: null }); return; }
-    const after = { ...current, vertices: current.vertices ? [...current.vertices] : undefined };
-    const before = snap;
-    const id = snap.id;
+    const snaps = get()._batchSnapshots;
+    if (snaps.length === 0) return;
+    const snapIds = new Set(snaps.map((s) => s.id));
+    const afters = get().objects.filter((o) => snapIds.has(o.id)).map(snapshotObj);
+    const befores = snaps;
     const cmd: Command = {
-      execute: () => set((s) => ({ objects: s.objects.map((o) => (o.id === id ? { ...after } : o)) })),
-      undo: () => set((s) => ({ objects: s.objects.map((o) => (o.id === id ? { ...before } : o)) })),
+      execute: () => set((s) => ({
+        objects: s.objects.map((o) => {
+          const a = afters.find((x) => x.id === o.id);
+          return a ? { ...a } : o;
+        }),
+      })),
+      undo: () => set((s) => ({
+        objects: s.objects.map((o) => {
+          const b = befores.find((x) => x.id === o.id);
+          return b ? { ...b } : o;
+        }),
+      })),
     };
     get().pushCommand(cmd);
-    set({ _batchSnapshot: null });
+    set({ _batchSnapshots: [] });
   },
 
   cancelBatch: () => {
-    const snap = get()._batchSnapshot;
-    if (snap) {
+    const snaps = get()._batchSnapshots;
+    if (snaps.length > 0) {
+      const snapMap = new Map(snaps.map((s) => [s.id, s]));
       set((s) => ({
-        objects: s.objects.map((o) => (o.id === snap.id ? { ...snap } : o)),
-        _batchSnapshot: null,
+        objects: s.objects.map((o) => snapMap.get(o.id) ?? o),
+        _batchSnapshots: [],
       }));
     }
+  },
+
+  /* --- Group management --- */
+
+  createGroup: (name, objectIds) => {
+    const gid = uuid();
+    set((s) => ({
+      objects: s.objects.map((o) => objectIds.includes(o.id) ? { ...o, groupId: gid } : o),
+      groupNames: { ...s.groupNames, [gid]: name },
+    }));
+    return gid;
+  },
+
+  dissolveGroup: (groupId) => {
+    set((s) => ({
+      objects: s.objects.map((o) => o.groupId === groupId ? { ...o, groupId: undefined } : o),
+      groupNames: Object.fromEntries(Object.entries(s.groupNames).filter(([k]) => k !== groupId)),
+    }));
   },
 
   pushCommand: (cmd) =>
@@ -243,17 +288,23 @@ export const createObjectSlice: StateCreator<EditorState, [], [], ObjectSlice> =
     projectName: data.name,
     gridSize: data.gridSize,
     objects: data.objects,
+    groupNames: data.groupNames ?? {},
     selectedIds: [],
     undoStack: [],
     redoStack: [],
     placingType: null,
     drawingPolygon: false,
     drawVertices: [],
-    _batchSnapshot: null,
+    _batchSnapshots: [],
   }),
 
   exportProjectJson: () => {
     const s = get();
-    return JSON.stringify({ name: s.projectName, gridSize: s.gridSize, objects: s.objects }, null, 2);
+    return JSON.stringify({
+      name: s.projectName,
+      gridSize: s.gridSize,
+      objects: s.objects,
+      groupNames: s.groupNames,
+    }, null, 2);
   },
 });

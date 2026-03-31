@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import { SCENE_COLORS } from '../constants';
 import { createGeometry } from './primitiveGeometry';
-import type { PrimitiveType } from '../types';
-import { snapVec3 } from '../utils/math';
+import type { PrimitiveType, Vec3 } from '../types';
 
 export interface PlaceGhost {
   mesh: THREE.Mesh | null;
@@ -13,9 +12,7 @@ export function updatePlaceGhost(
   ghost: PlaceGhost,
   scene: THREE.Scene,
   placingType: PrimitiveType | null,
-  groundPoint: THREE.Vector3 | null,
-  gridSize: number,
-  snapEnabled: boolean,
+  surfacePoint: Vec3 | null,
 ): PlaceGhost {
   if (!placingType) {
     if (ghost.mesh) {
@@ -44,9 +41,8 @@ export function updatePlaceGhost(
     type = placingType;
   }
 
-  if (groundPoint && mesh) {
-    const snapped = snapVec3({ x: groundPoint.x, y: 0, z: groundPoint.z }, gridSize, snapEnabled);
-    mesh.position.set(snapped.x, 0, snapped.z);
+  if (surfacePoint && mesh) {
+    mesh.position.set(surfacePoint.x, surfacePoint.y, surfacePoint.z);
     mesh.visible = true;
   }
 

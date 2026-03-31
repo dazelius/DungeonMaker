@@ -16,6 +16,9 @@ export const SCENE_COLORS = {
   roadPreview: 0xee8833,
   wallPreview: 0x55aadd,
   edgeHighlight: 0xffdd44,
+  rampPreview: 0xccaa44,
+  cliffPreview: 0x886644,
+  trimPreview: 0x66aaaa,
 } as const;
 
 export const OBJECT_DEFAULTS = {
@@ -24,9 +27,18 @@ export const OBJECT_DEFAULTS = {
   polygonColor: '#b0b0b0',
   roadColor: '#a0a0a0',
   wallColor: '#c8c8c8',
+  rampColor: '#c8b888',
+  cliffColor: '#8b7355',
   roadWidth: 3,
   wallHeight: 3,
   wallThickness: 0.2,
+  rampHeight: 3,
+  rampWidth: 2,
+  cliffHeight: 3,
+  cliffThickness: 0.2,
+  trimColor: '#a0b0b0',
+  trimHeight: 1,
+  trimThickness: 0.5,
 } as const;
 
 export const EDITOR = {
@@ -72,12 +84,12 @@ export const PLAY = {
   gravity: -15,
   mouseSensitivity: 0.002,
   playerRadius: 0.3,
-  playerHeight: 1.7,
-  eyeHeight: 1.5,
+  playerHeight: 1.8,
+  eyeHeight: 1.6,
   thirdPersonDist: 8,
   thirdPersonAngle: 45,
   thirdPersonHeight: 6,
   clickMoveSpeed: 6,
   capsuleColor: 0x4488ff,
-  groundY: 0,
+  groundY: -100,
 } as const;

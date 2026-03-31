@@ -44,13 +44,83 @@ export function createGeometry(type: PrimitiveType): THREE.BufferGeometry {
       geos.forEach((g) => g.dispose());
       return merged ?? new THREE.BoxGeometry(1, 1, 1);
     }
+    case 'ramp':
+      return new THREE.BoxGeometry(1, 0.1, 1);
     case 'polygon':
       return new THREE.BoxGeometry(1, GEOMETRY.polyThin, 1);
     case 'road':
       return new THREE.PlaneGeometry(OBJECT_DEFAULTS.roadWidth, 1);
     case 'wall':
       return new THREE.BoxGeometry(1, OBJECT_DEFAULTS.wallHeight, OBJECT_DEFAULTS.wallThickness);
+    case 'cliff':
+      return new THREE.BoxGeometry(1, OBJECT_DEFAULTS.cliffHeight, OBJECT_DEFAULTS.cliffThickness);
+    case 'trim':
+      return new THREE.BoxGeometry(1, OBJECT_DEFAULTS.trimHeight, OBJECT_DEFAULTS.trimThickness);
   }
+}
+
+export function createRampGeometry(start: Vec3, end: Vec3, width: number, height: number): THREE.BufferGeometry {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const len = Math.sqrt(dx * dx + dz * dz);
+  if (len < 0.001) return new THREE.BoxGeometry(0.1, 0.1, 0.1);
+
+  const h = Math.max(0.01, height);
+  const hw = width / 2;
+
+  const dirX = dx / len;
+  const dirZ = dz / len;
+  const nrmX = -dirZ;
+  const nrmZ = dirX;
+
+  const sx = start.x, sz = start.z;
+  const ex = end.x, ez = end.z;
+  const baseY = start.y ?? 0;
+  const topY = baseY + h;
+
+  const s0x = sx - nrmX * hw, s0z = sz - nrmZ * hw;
+  const s1x = sx + nrmX * hw, s1z = sz + nrmZ * hw;
+  const e0x = ex - nrmX * hw, e0z = ez - nrmZ * hw;
+  const e1x = ex + nrmX * hw, e1z = ez + nrmZ * hw;
+
+  const positions = new Float32Array([
+    // slope face
+    s0x, baseY, s0z,   s1x, baseY, s1z,   e1x, topY, e1z,
+    s0x, baseY, s0z,   e1x, topY, e1z,   e0x, topY, e0z,
+    // bottom face
+    s0x, baseY, s0z,   e0x, baseY, e0z,   e1x, baseY, e1z,
+    s0x, baseY, s0z,   e1x, baseY, e1z,   s1x, baseY, s1z,
+    // back face (high wall at end)
+    e0x, baseY, e0z,   e0x, topY, e0z,   e1x, topY, e1z,
+    e0x, baseY, e0z,   e1x, topY, e1z,   e1x, baseY, e1z,
+    // left side triangle
+    s0x, baseY, s0z,   e0x, topY, e0z,   e0x, baseY, e0z,
+    // right side triangle
+    s1x, baseY, s1z,   e1x, baseY, e1z,   e1x, topY, e1z,
+  ]);
+
+  const uvScale = 0.5;
+  const uvs = new Float32Array([
+    // slope (use world XZ)
+    s0x*uvScale, s0z*uvScale,  s1x*uvScale, s1z*uvScale,  e1x*uvScale, e1z*uvScale,
+    s0x*uvScale, s0z*uvScale,  e1x*uvScale, e1z*uvScale,  e0x*uvScale, e0z*uvScale,
+    // bottom
+    s0x*uvScale, s0z*uvScale,  e0x*uvScale, e0z*uvScale,  e1x*uvScale, e1z*uvScale,
+    s0x*uvScale, s0z*uvScale,  e1x*uvScale, e1z*uvScale,  s1x*uvScale, s1z*uvScale,
+    // back wall
+    e0x*uvScale, baseY*uvScale,  e0x*uvScale, topY*uvScale,  e1x*uvScale, topY*uvScale,
+    e0x*uvScale, baseY*uvScale,  e1x*uvScale, topY*uvScale,  e1x*uvScale, baseY*uvScale,
+    // left side tri
+    s0x*uvScale, baseY*uvScale,  e0x*uvScale, topY*uvScale,  e0x*uvScale, baseY*uvScale,
+    // right side tri
+    s1x*uvScale, baseY*uvScale,  e1x*uvScale, baseY*uvScale,  e1x*uvScale, topY*uvScale,
+  ]);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.computeVertexNormals();
+  return geo;
 }
 
 export function createPolygonGeometry(vertices: Vec3[], extrudeHeight = 0): THREE.BufferGeometry {
@@ -65,31 +135,52 @@ export function createPolygonGeometry(vertices: Vec3[], extrudeHeight = 0): THRE
     shape.lineTo(ordered[i].x, ordered[i].z);
   }
 
+  const baseY = ordered[0].y ?? 0;
+
   if (extrudeHeight > 0) {
-    return createExtrudedPolygon(shape, extrudeHeight);
+    return createExtrudedPolygon(shape, extrudeHeight, baseY);
   }
-  return createFlatPolygon(shape);
+  return createFlatPolygon(shape, baseY);
 }
 
-function createFlatPolygon(shape: THREE.Shape): THREE.BufferGeometry {
+function createFlatPolygon(shape: THREE.Shape, baseY = 0): THREE.BufferGeometry {
   const geo = new THREE.ShapeGeometry(shape);
   const pos = geo.getAttribute('position');
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getY(i);
-    pos.setXYZ(i, x, GEOMETRY.polyThin, z);
+    pos.setXYZ(i, x, baseY + GEOMETRY.polyThin, z);
   }
   pos.needsUpdate = true;
+
+  const idx = geo.getIndex();
+  if (idx) {
+    const idxArr = idx.array as Uint16Array | Uint32Array;
+    for (let i = 0; i < idxArr.length; i += 3) {
+      const tmp = idxArr[i + 1];
+      idxArr[i + 1] = idxArr[i + 2];
+      idxArr[i + 2] = tmp;
+    }
+    idx.needsUpdate = true;
+  }
+
+  const nrmArr = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    nrmArr[i * 3] = 0;
+    nrmArr[i * 3 + 1] = 1;
+    nrmArr[i * 3 + 2] = 0;
+  }
+  geo.setAttribute('normal', new THREE.BufferAttribute(nrmArr, 3));
+
   const uv = geo.getAttribute('uv');
   for (let i = 0; i < uv.count; i++) {
     uv.setXY(i, uv.getX(i) * 0.5, uv.getY(i) * 0.5);
   }
   uv.needsUpdate = true;
-  geo.computeVertexNormals();
   return geo;
 }
 
-function createExtrudedPolygon(shape: THREE.Shape, height: number): THREE.BufferGeometry {
+function createExtrudedPolygon(shape: THREE.Shape, height: number, baseY = 0): THREE.BufferGeometry {
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth: height,
     bevelEnabled: false,
@@ -100,7 +191,7 @@ function createExtrudedPolygon(shape: THREE.Shape, height: number): THREE.Buffer
     const x = pos.getX(i);
     const shapeY = pos.getY(i);
     const extZ = pos.getZ(i);
-    pos.setXYZ(i, x, extZ, shapeY);
+    pos.setXYZ(i, x, baseY + extZ, shapeY);
   }
   pos.needsUpdate = true;
 
@@ -159,7 +250,7 @@ function deduplicateAdjacent(verts: Vec3[]): Vec3[] {
 export function createRoadGeometry(controlPoints: Vec3[], width: number): THREE.BufferGeometry {
   if (controlPoints.length < 2) return new THREE.PlaneGeometry(width, 1);
 
-  const pts3 = controlPoints.map((v) => new THREE.Vector3(v.x, 0, v.z));
+  const pts3 = controlPoints.map((v) => new THREE.Vector3(v.x, v.y ?? 0, v.z));
   const curve = new THREE.CatmullRomCurve3(pts3, false, 'catmullrom', 0.5);
   const segCount = Math.max(2, (controlPoints.length - 1) * EDITOR.roadSegmentsPerPoint);
   const samples = curve.getPoints(segCount);
@@ -168,7 +259,6 @@ export function createRoadGeometry(controlPoints: Vec3[], width: number): THREE.
   const indices: number[] = [];
   const uvs: number[] = [];
   const halfW = width / 2;
-  let totalLen = 0;
 
   for (let i = 0; i < samples.length; i++) {
     const p = samples[i];
@@ -178,14 +268,15 @@ export function createRoadGeometry(controlPoints: Vec3[], width: number): THREE.
     } else {
       tangent = new THREE.Vector3().subVectors(p, samples[i - 1]).normalize();
     }
-    const normal = new THREE.Vector3(-tangent.z, 0, tangent.x);
+    const flatTangent = new THREE.Vector3(tangent.x, 0, tangent.z).normalize();
+    const normal = new THREE.Vector3(-flatTangent.z, 0, flatTangent.x);
     const left = new THREE.Vector3().copy(p).addScaledVector(normal, halfW);
     const right = new THREE.Vector3().copy(p).addScaledVector(normal, -halfW);
-    positions.push(left.x, GEOMETRY.polyThin, left.z);
-    positions.push(right.x, GEOMETRY.polyThin, right.z);
-    if (i > 0) totalLen += p.distanceTo(samples[i - 1]);
-    uvs.push(0, totalLen / 2);
-    uvs.push(width / 2, totalLen / 2);
+    const surfY = p.y + GEOMETRY.polyThin;
+    positions.push(left.x, surfY, left.z);
+    positions.push(right.x, surfY, right.z);
+    uvs.push(left.x * 0.5, left.z * 0.5);
+    uvs.push(right.x * 0.5, right.z * 0.5);
   }
 
   for (let i = 0; i < samples.length - 1; i++) {
@@ -201,7 +292,14 @@ export function createRoadGeometry(controlPoints: Vec3[], width: number): THREE.
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
-  geo.computeVertexNormals();
+
+  const nrmArr = new Float32Array((positions.length / 3) * 3);
+  for (let i = 0; i < positions.length / 3; i++) {
+    nrmArr[i * 3] = 0;
+    nrmArr[i * 3 + 1] = 1;
+    nrmArr[i * 3 + 2] = 0;
+  }
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrmArr, 3));
   return geo;
 }
 
@@ -210,6 +308,8 @@ export function createWallGeometry(start: Vec3, end: Vec3, height: number, thick
   const dz = end.z - start.z;
   const length = Math.sqrt(dx * dx + dz * dz);
   if (length < 0.001) return new THREE.BoxGeometry(0.1, height, thickness);
+
+  const baseY = Math.min(start.y ?? 0, end.y ?? 0);
 
   const geo = new THREE.BoxGeometry(length, height, thickness);
   const uv = geo.getAttribute('uv');
@@ -224,7 +324,34 @@ export function createWallGeometry(start: Vec3, end: Vec3, height: number, thick
   const cz = (start.z + end.z) / 2;
 
   const rotMatrix = new THREE.Matrix4().makeRotationY(-angle);
-  const transMatrix = new THREE.Matrix4().makeTranslation(cx, 0, cz);
+  const transMatrix = new THREE.Matrix4().makeTranslation(cx, baseY, cz);
+  geo.applyMatrix4(rotMatrix);
+  geo.applyMatrix4(transMatrix);
+  return geo;
+}
+
+export function createCliffGeometry(start: Vec3, end: Vec3, height: number, thickness: number): THREE.BufferGeometry {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const length = Math.sqrt(dx * dx + dz * dz);
+  if (length < 0.001) return new THREE.BoxGeometry(0.1, height, thickness);
+
+  const baseY = Math.min(start.y ?? 0, end.y ?? 0);
+
+  const geo = new THREE.BoxGeometry(length, height, thickness);
+  const uv = geo.getAttribute('uv');
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, uv.getX(i) * length * 0.5, uv.getY(i) * height * 0.5);
+  }
+  uv.needsUpdate = true;
+  geo.translate(0, -height / 2, 0);
+
+  const angle = Math.atan2(dz, dx);
+  const cx = (start.x + end.x) / 2;
+  const cz = (start.z + end.z) / 2;
+
+  const rotMatrix = new THREE.Matrix4().makeRotationY(-angle);
+  const transMatrix = new THREE.Matrix4().makeTranslation(cx, baseY, cz);
   geo.applyMatrix4(rotMatrix);
   geo.applyMatrix4(transMatrix);
   return geo;
@@ -237,7 +364,7 @@ export function createCurvedWallGeometry(
 ): THREE.BufferGeometry {
   if (controlPoints.length < 2) return new THREE.BoxGeometry(0.1, height, thickness);
 
-  const pts3 = controlPoints.map((v) => new THREE.Vector3(v.x, 0, v.z));
+  const pts3 = controlPoints.map((v) => new THREE.Vector3(v.x, v.y ?? 0, v.z));
   const curve = new THREE.CatmullRomCurve3(pts3, false, 'catmullrom', 0.5);
   const segCount = Math.max(2, (controlPoints.length - 1) * EDITOR.roadSegmentsPerPoint);
   const samples = curve.getPoints(segCount);
@@ -265,11 +392,12 @@ export function createCurvedWallGeometry(
     if (i > 0) totalLen += p.distanceTo(samples[i - 1]);
     const u = totalLen / 2;
     const vTop = height / 2;
+    const baseY = p.y;
 
-    positions.push(p.x + nx, 0, p.z + nz);        // outer bottom
-    positions.push(p.x + nx, height, p.z + nz);    // outer top
-    positions.push(p.x - nx, 0, p.z - nz);         // inner bottom
-    positions.push(p.x - nx, height, p.z - nz);    // inner top
+    positions.push(p.x + nx, baseY, p.z + nz);              // outer bottom
+    positions.push(p.x + nx, baseY + height, p.z + nz);     // outer top
+    positions.push(p.x - nx, baseY, p.z - nz);              // inner bottom
+    positions.push(p.x - nx, baseY + height, p.z - nz);     // inner top
 
     uvs.push(u, 0, u, vTop, u, 0, u, vTop);
   }

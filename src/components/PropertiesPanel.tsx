@@ -75,6 +75,75 @@ export function PropertiesPanel() {
         />
       )}
 
+      {obj.type === 'ramp' && (
+        <>
+          <HeightControl
+            label="Ramp Height"
+            value={obj.rampHeight ?? 3}
+            onChange={(h) => patch('rampHeight', Math.max(0.1, h))}
+          />
+          <HeightControl
+            label="Ramp Width"
+            value={obj.rampWidth ?? 2}
+            onChange={(w) => patch('rampWidth', Math.max(0.1, w))}
+          />
+        </>
+      )}
+
+      {obj.type === 'cliff' && (
+        <>
+          <HeightControl
+            label="Cliff Depth"
+            value={obj.cliffHeight ?? 3}
+            onChange={(h) => patch('cliffHeight', Math.max(0.1, h))}
+          />
+          <div>
+            <label style={labelStyle.section}>Cliff Thickness</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="range"
+                min={0.05}
+                max={2}
+                step={0.05}
+                value={obj.cliffThickness ?? 0.2}
+                onChange={(e) => patch('cliffThickness', parseFloat(e.target.value))}
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: 11, color: '#aaa', minWidth: 32, textAlign: 'right' }}>
+                {(obj.cliffThickness ?? 0.2).toFixed(2)}
+              </span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {obj.type === 'trim' && (
+        <>
+          <HeightControl
+            label="Trim Height"
+            value={obj.trimHeight ?? 1}
+            onChange={(h) => patch('trimHeight', Math.max(0.1, h))}
+          />
+          <div>
+            <label style={labelStyle.section}>Trim Thickness</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="range"
+                min={0.1}
+                max={3}
+                step={0.1}
+                value={obj.trimThickness ?? 0.5}
+                onChange={(e) => patch('trimThickness', parseFloat(e.target.value))}
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: 11, color: '#aaa', minWidth: 32, textAlign: 'right' }}>
+                {(obj.trimThickness ?? 0.5).toFixed(1)}
+              </span>
+            </div>
+          </div>
+        </>
+      )}
+
       {obj.type === 'wall' && (
         <>
           <HeightControl
@@ -168,13 +237,22 @@ export function PropertiesPanel() {
       )}
 
       {(obj.type === 'polygon' || obj.type === 'plane' || obj.type === 'road') && (
-        <button
-          onClick={() => useEditor.getState().createWallsFromAllEdges(obj.id)}
-          style={{ ...btn.accent, width: '100%' }}
-          title="Create walls on all edges of this polygon/plane"
-        >
-          Create Walls on All Edges
-        </button>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button
+            onClick={() => useEditor.getState().createWallsFromAllEdges(obj.id)}
+            style={{ ...btn.accent, flex: 1 }}
+            title="Create walls on all edges of this polygon/plane"
+          >
+            Walls on All Edges
+          </button>
+          <button
+            onClick={() => useEditor.getState().createCliffsFromAllEdges(obj.id)}
+            style={{ ...btn.accent, flex: 1, background: '#78350f' }}
+            title="Create cliffs (drop-down) on all edges"
+          >
+            Cliffs on All Edges
+          </button>
+        </div>
       )}
 
       <div style={{ display: 'flex', gap: 4, paddingTop: 4 }}>

@@ -3,8 +3,8 @@ import { useEditor } from '../store';
 export function PlayHUD() {
   const playCameraMode = useEditor((s) => s.playCameraMode);
 
-  const hints = playCameraMode === '1st'
-    ? 'WASD: Move / Space: Jump / Shift: Sprint / V: Switch Camera / ESC: Exit'
+  const hints = playCameraMode === 'back'
+    ? 'WASD: Move / RightDrag: Rotate / Scroll: Zoom / V: Switch Camera / ESC: Exit'
     : 'Click: Move / Space: Jump / V: Switch Camera / ESC: Exit';
 
   return (

@@ -26,6 +26,18 @@ export function PrimitivePalette() {
   const cancelWallDrawing = useEditor((s) => s.cancelWallDrawing);
   const startDrawingRoad = useEditor((s) => s.startDrawingRoad);
   const cancelRoadDrawing = useEditor((s) => s.cancelRoadDrawing);
+  const drawingRamp = useEditor((s) => s.drawingRamp);
+  const rampVertices = useEditor((s) => s.rampVertices);
+  const startDrawingRamp = useEditor((s) => s.startDrawingRamp);
+  const cancelRampDrawing = useEditor((s) => s.cancelRampDrawing);
+  const drawingCliff = useEditor((s) => s.drawingCliff);
+  const cliffVertices = useEditor((s) => s.cliffVertices);
+  const startDrawingCliff = useEditor((s) => s.startDrawingCliff);
+  const cancelCliffDrawing = useEditor((s) => s.cancelCliffDrawing);
+  const drawingTrim = useEditor((s) => s.drawingTrim);
+  const trimVertices = useEditor((s) => s.trimVertices);
+  const startDrawingTrim = useEditor((s) => s.startDrawingTrim);
+  const cancelTrimDrawing = useEditor((s) => s.cancelTrimDrawing);
 
   return (
     <div style={panel.sidebar}>
@@ -98,7 +110,53 @@ export function PrimitivePalette() {
         Draw Road
       </button>
 
-      {placingType && !drawingPolygon && !drawingWall && !drawingRoad && (
+      <button
+        onClick={() => drawingRamp ? cancelRampDrawing() : startDrawingRamp()}
+        style={drawButton.base(drawingRamp)}
+        onMouseEnter={(e) => { if (!drawingRamp) { e.currentTarget.style.background = paletteItem.hover.background; e.currentTarget.style.color = paletteItem.hover.color; } }}
+        onMouseLeave={(e) => { if (!drawingRamp) { e.currentTarget.style.background = drawButton.base(false).background as string; e.currentTarget.style.color = drawButton.base(false).color as string; } }}
+        title="Draw ramp by clicking two points (start → end)"
+      >
+        <svg width={16} height={16} viewBox="0 0 20 20">
+          <polygon points="3,17 17,17 17,5" fill="none" stroke={drawingRamp ? drawButton.activeColor : drawButton.inactiveColor} strokeWidth="1.5"/>
+          <line x1="14" y1="8" x2="14" y2="14" stroke={drawingRamp ? drawButton.activeColor : drawButton.inactiveColor} strokeWidth="1" strokeDasharray="2,1"/>
+        </svg>
+        Draw Ramp
+      </button>
+
+      <button
+        onClick={() => drawingCliff ? cancelCliffDrawing() : startDrawingCliff()}
+        style={drawButton.base(drawingCliff)}
+        onMouseEnter={(e) => { if (!drawingCliff) { e.currentTarget.style.background = paletteItem.hover.background; e.currentTarget.style.color = paletteItem.hover.color; } }}
+        onMouseLeave={(e) => { if (!drawingCliff) { e.currentTarget.style.background = drawButton.base(false).background as string; e.currentTarget.style.color = drawButton.base(false).color as string; } }}
+        title="Draw cliff by clicking two points (drops down)"
+      >
+        <svg width={16} height={16} viewBox="0 0 20 20">
+          <line x1="3" y1="5" x2="17" y2="5" stroke={drawingCliff ? drawButton.activeColor : drawButton.inactiveColor} strokeWidth="1.5"/>
+          <line x1="3" y1="5" x2="3" y2="17" stroke={drawingCliff ? drawButton.activeColor : drawButton.inactiveColor} strokeWidth="1.5"/>
+          <line x1="17" y1="5" x2="17" y2="17" stroke={drawingCliff ? drawButton.activeColor : drawButton.inactiveColor} strokeWidth="1.5"/>
+          <line x1="10" y1="8" x2="10" y2="15" stroke={drawingCliff ? drawButton.activeColor : drawButton.inactiveColor} strokeWidth="1" strokeDasharray="2,1"/>
+          <polygon points="8,14 10,17 12,14" fill={drawingCliff ? drawButton.activeColor : drawButton.inactiveColor}/>
+        </svg>
+        Draw Cliff
+      </button>
+
+      <button
+        onClick={() => drawingTrim ? cancelTrimDrawing() : startDrawingTrim()}
+        style={drawButton.base(drawingTrim)}
+        onMouseEnter={(e) => { if (!drawingTrim) { e.currentTarget.style.background = paletteItem.hover.background; e.currentTarget.style.color = paletteItem.hover.color; } }}
+        onMouseLeave={(e) => { if (!drawingTrim) { e.currentTarget.style.background = drawButton.base(false).background as string; e.currentTarget.style.color = drawButton.base(false).color as string; } }}
+        title="Draw trim — low wide barrier (1m high)"
+      >
+        <svg width={16} height={16} viewBox="0 0 20 20">
+          <rect x="2" y="10" width="16" height="6" rx="1" fill="none" stroke={drawingTrim ? drawButton.activeColor : drawButton.inactiveColor} strokeWidth="1.5"/>
+          <line x1="7" y1="10" x2="7" y2="16" stroke={drawingTrim ? drawButton.activeColor : drawButton.inactiveColor} strokeWidth="1"/>
+          <line x1="13" y1="10" x2="13" y2="16" stroke={drawingTrim ? drawButton.activeColor : drawButton.inactiveColor} strokeWidth="1"/>
+        </svg>
+        Draw Trim
+      </button>
+
+      {placingType && !drawingPolygon && !drawingWall && !drawingRoad && !drawingRamp && !drawingCliff && !drawingTrim && (
         <div style={statusMsg.placing}>Click on ground to place. ESC to cancel.</div>
       )}
       {drawingPolygon && (
@@ -120,6 +178,24 @@ export function PrimitivePalette() {
           {roadVertices.length === 0 && 'Click to place first control point'}
           {roadVertices.length === 1 && '1 point — click to add more'}
           {roadVertices.length >= 2 && `${roadVertices.length} points — double-click or Enter to finish`}
+        </div>
+      )}
+      {drawingRamp && (
+        <div style={statusMsg.drawing}>
+          {rampVertices.length === 0 && 'Click to place ramp start (low end)'}
+          {rampVertices.length === 1 && 'Click to place ramp end (high end)'}
+        </div>
+      )}
+      {drawingCliff && (
+        <div style={statusMsg.drawing}>
+          {cliffVertices.length === 0 && 'Click first cliff point'}
+          {cliffVertices.length === 1 && 'Click second point to create cliff'}
+        </div>
+      )}
+      {drawingTrim && (
+        <div style={statusMsg.drawing}>
+          {trimVertices.length === 0 && 'Click first trim point'}
+          {trimVertices.length === 1 && 'Click second point to create trim'}
         </div>
       )}
     </div>
@@ -146,5 +222,11 @@ function PrimIcon({ type, active }: { type: PrimitiveType; active: boolean }) {
       return <svg width={s} height={s} viewBox="0 0 20 20"><path d="M2,16 C6,4 14,18 18,4" fill="none" stroke={c} strokeWidth="1.5"/></svg>;
     case 'wall':
       return <svg width={s} height={s} viewBox="0 0 20 20"><rect x="2" y="4" width="16" height="12" rx="1" fill="none" stroke={c} strokeWidth="1.5"/></svg>;
+    case 'ramp':
+      return <svg width={s} height={s} viewBox="0 0 20 20"><polygon points="3,17 17,17 17,5" fill="none" stroke={c} strokeWidth="1.5"/></svg>;
+    case 'cliff':
+      return <svg width={s} height={s} viewBox="0 0 20 20"><line x1="3" y1="5" x2="17" y2="5" stroke={c} strokeWidth="1.5"/><line x1="3" y1="5" x2="3" y2="17" stroke={c} strokeWidth="1.5"/><line x1="17" y1="5" x2="17" y2="17" stroke={c} strokeWidth="1.5"/></svg>;
+    case 'trim':
+      return <svg width={s} height={s} viewBox="0 0 20 20"><rect x="2" y="10" width="16" height="6" rx="1" fill="none" stroke={c} strokeWidth="1.5"/></svg>;
   }
 }

@@ -19,6 +19,12 @@ export interface ToolSlice {
   roadVertices: Vec3[];
   roadRedoVertices: Vec3[];
   drawingWallEdge: boolean;
+  drawingRamp: boolean;
+  rampVertices: Vec3[];
+  drawingCliff: boolean;
+  cliffVertices: Vec3[];
+  drawingTrim: boolean;
+  trimVertices: Vec3[];
 
   startPlacing: (type: PrimitiveType) => void;
   cancelPlacing: () => void;
@@ -42,10 +48,20 @@ export interface ToolSlice {
   redoRoadVertex: () => void;
   finishRoad: () => string | null;
   cancelRoadDrawing: () => void;
+  startDrawingRamp: () => void;
+  addRampVertex: (pos: Vec3) => void;
+  cancelRampDrawing: () => void;
+  startDrawingCliff: () => void;
+  addCliffVertex: (pos: Vec3) => void;
+  cancelCliffDrawing: () => void;
+  startDrawingTrim: () => void;
+  addTrimVertex: (pos: Vec3) => void;
+  cancelTrimDrawing: () => void;
   startDrawingWallEdge: () => void;
   cancelWallEdgeDrawing: () => void;
   createWallFromEdge: (start: Vec3, end: Vec3) => string;
   createWallsFromAllEdges: (objectId: string) => void;
+  createCliffsFromAllEdges: (objectId: string) => void;
 }
 
 function computeRoadSidePoints(controlPoints: Vec3[], width: number): [Vec3[], Vec3[]] {
@@ -72,18 +88,47 @@ function computeRoadSidePoints(controlPoints: Vec3[], width: number): [Vec3[], V
     const tdz = tz / tLen;
 
     if (i === 0) {
-      p = { x: p.x + tdx * inset, y: 0, z: p.z + tdz * inset };
+      p = { x: p.x + tdx * inset, y: p.y, z: p.z + tdz * inset };
     } else if (i === n - 1) {
-      p = { x: p.x - tdx * inset, y: 0, z: p.z - tdz * inset };
+      p = { x: p.x - tdx * inset, y: p.y, z: p.z - tdz * inset };
     }
 
     const nx = -tdz;
     const nz = tdx;
-    left.push({ x: p.x + nx * halfW, y: 0, z: p.z + nz * halfW });
-    right.push({ x: p.x - nx * halfW, y: 0, z: p.z - nz * halfW });
+    left.push({ x: p.x + nx * halfW, y: p.y, z: p.z + nz * halfW });
+    right.push({ x: p.x - nx * halfW, y: p.y, z: p.z - nz * halfW });
   }
 
   return [left, right];
+}
+
+function applyPositionOffset(verts: Vec3[], pos: Vec3): Vec3[] {
+  if (pos.x === 0 && pos.y === 0 && pos.z === 0) return verts;
+  return verts.map((v) => ({
+    x: v.x + pos.x,
+    y: (v.y ?? 0) + pos.y,
+    z: v.z + pos.z,
+  }));
+}
+
+function getEdgeVerts(source: LevelObject): Vec3[] | null {
+  if (source.type === 'polygon' && source.vertices && source.vertices.length >= 3) {
+    return applyPositionOffset(source.vertices, source.position);
+  }
+  if (source.type === 'plane') {
+    const hs = 2;
+    const p = source.position;
+    const sx = source.scale.x;
+    const sz = source.scale.z;
+    const y = p.y;
+    return [
+      { x: p.x - hs * sx, y, z: p.z - hs * sz },
+      { x: p.x + hs * sx, y, z: p.z - hs * sz },
+      { x: p.x + hs * sx, y, z: p.z + hs * sz },
+      { x: p.x - hs * sx, y, z: p.z + hs * sz },
+    ];
+  }
+  return null;
 }
 
 function cancelAllDrawing(): Partial<EditorState> {
@@ -93,6 +138,9 @@ function cancelAllDrawing(): Partial<EditorState> {
     drawingWall: false, wallVertices: [],
     drawingRoad: false, roadVertices: [], roadRedoVertices: [],
     drawingWallEdge: false,
+    drawingRamp: false, rampVertices: [],
+    drawingCliff: false, cliffVertices: [],
+    drawingTrim: false, trimVertices: [],
   };
 }
 
@@ -109,6 +157,12 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
   roadVertices: [],
   roadRedoVertices: [],
   drawingWallEdge: false,
+  drawingRamp: false,
+  rampVertices: [],
+  drawingCliff: false,
+  cliffVertices: [],
+  drawingTrim: false,
+  trimVertices: [],
 
   startPlacing: (type) => set({ ...cancelAllDrawing(), placingType: type }),
   cancelPlacing: () => set(cancelAllDrawing()),
@@ -118,7 +172,7 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
   addDrawVertex: (pos) => {
     const { gridSize, snapEnabled } = get();
     const snapped = snapVec3(pos, gridSize, snapEnabled);
-    set((s) => ({ drawVertices: [...s.drawVertices, { x: snapped.x, y: 0, z: snapped.z }], drawRedoVertices: [] }));
+    set((s) => ({ drawVertices: [...s.drawVertices, { x: snapped.x, y: get().floorY, z: snapped.z }], drawRedoVertices: [] }));
   },
 
   undoDrawVertex: () => {
@@ -202,7 +256,8 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
     if (!type) return get().addObject('box');
     const { gridSize, snapEnabled } = get();
     const snapped = snapVec3(pos, gridSize, snapEnabled);
-    snapped.y = 0;
+    const color = type === 'plane' ? OBJECT_DEFAULTS.planeColor
+      : OBJECT_DEFAULTS.color;
     const obj: LevelObject = {
       id: uuid(),
       name: nextPrimitiveName(type),
@@ -210,7 +265,7 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
       position: snapped,
       rotation: { x: 0, y: 0, z: 0 },
       scale: { x: 1, y: 1, z: 1 },
-      color: type === 'plane' ? OBJECT_DEFAULTS.planeColor : OBJECT_DEFAULTS.color,
+      color,
       visible: true,
     };
     const id = obj.id;
@@ -230,7 +285,7 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
   addWallVertex: (pos) => {
     const { gridSize, snapEnabled } = get();
     const snapped = snapVec3(pos, gridSize, snapEnabled);
-    const pt: Vec3 = { x: snapped.x, y: 0, z: snapped.z };
+    const pt: Vec3 = { x: snapped.x, y: get().floorY, z: snapped.z };
     const prev = get().wallVertices;
     if (prev.length === 0) {
       set({ wallVertices: [pt] });
@@ -271,7 +326,7 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
   addRoadVertex: (pos) => {
     const { gridSize, snapEnabled } = get();
     const snapped = snapVec3(pos, gridSize, snapEnabled);
-    set((s) => ({ roadVertices: [...s.roadVertices, { x: snapped.x, y: 0, z: snapped.z }], roadRedoVertices: [] }));
+    set((s) => ({ roadVertices: [...s.roadVertices, { x: snapped.x, y: get().floorY, z: snapped.z }], roadRedoVertices: [] }));
   },
 
   undoRoadVertex: () => {
@@ -322,6 +377,123 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
 
   cancelRoadDrawing: () => set(cancelAllDrawing()),
 
+  /* ── Ramp (two-point) ── */
+
+  startDrawingRamp: () => set({ ...cancelAllDrawing(), drawingRamp: true }),
+
+  addRampVertex: (pos) => {
+    const { gridSize, snapEnabled } = get();
+    const snapped = snapVec3(pos, gridSize, snapEnabled);
+    const pt: Vec3 = { x: snapped.x, y: pos.y, z: snapped.z };
+    const prev = get().rampVertices;
+    if (prev.length === 0) {
+      set({ rampVertices: [pt] });
+      return;
+    }
+    const start = prev[0];
+    const id = uuid();
+    const obj: LevelObject = {
+      id,
+      name: nextPrimitiveName('ramp'),
+      type: 'ramp',
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+      color: OBJECT_DEFAULTS.rampColor,
+      visible: true,
+      vertices: [start, pt],
+      rampHeight: OBJECT_DEFAULTS.rampHeight,
+      rampWidth: OBJECT_DEFAULTS.rampWidth,
+    };
+    const cmd: Command = {
+      execute: () => set({ objects: [...get().objects.filter((o) => o.id !== id), obj], selectedIds: [id] }),
+      undo: () => set({ objects: get().objects.filter((o) => o.id !== id), selectedIds: get().selectedIds.filter((s) => s !== id) }),
+    };
+    cmd.execute();
+    get().pushCommand(cmd);
+    set({ rampVertices: [pt] });
+  },
+
+  cancelRampDrawing: () => set(cancelAllDrawing()),
+
+  /* ── Cliff (two-point, wall going down) ── */
+
+  startDrawingCliff: () => set({ ...cancelAllDrawing(), drawingCliff: true }),
+
+  addCliffVertex: (pos) => {
+    const { gridSize, snapEnabled } = get();
+    const snapped = snapVec3(pos, gridSize, snapEnabled);
+    const pt: Vec3 = { x: snapped.x, y: get().floorY, z: snapped.z };
+    const prev = get().cliffVertices;
+    if (prev.length === 0) {
+      set({ cliffVertices: [pt] });
+      return;
+    }
+    const start = prev[0];
+    const id = uuid();
+    const obj: LevelObject = {
+      id,
+      name: nextPrimitiveName('cliff'),
+      type: 'cliff',
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+      color: OBJECT_DEFAULTS.cliffColor,
+      visible: true,
+      vertices: [start, pt],
+      cliffHeight: OBJECT_DEFAULTS.cliffHeight,
+      cliffThickness: OBJECT_DEFAULTS.cliffThickness,
+    };
+    const cmd: Command = {
+      execute: () => set({ objects: [...get().objects.filter((o) => o.id !== id), obj], selectedIds: [id] }),
+      undo: () => set({ objects: get().objects.filter((o) => o.id !== id), selectedIds: get().selectedIds.filter((s) => s !== id) }),
+    };
+    cmd.execute();
+    get().pushCommand(cmd);
+    set({ cliffVertices: [pt] });
+  },
+
+  cancelCliffDrawing: () => set(cancelAllDrawing()),
+
+  /* ── Trim (two-point, low wide barrier wall) ── */
+
+  startDrawingTrim: () => set({ ...cancelAllDrawing(), drawingTrim: true }),
+
+  addTrimVertex: (pos) => {
+    const { gridSize, snapEnabled } = get();
+    const snapped = snapVec3(pos, gridSize, snapEnabled);
+    const pt: Vec3 = { x: snapped.x, y: get().floorY, z: snapped.z };
+    const prev = get().trimVertices;
+    if (prev.length === 0) {
+      set({ trimVertices: [pt] });
+      return;
+    }
+    const start = prev[0];
+    const id = uuid();
+    const obj: LevelObject = {
+      id,
+      name: nextPrimitiveName('trim'),
+      type: 'trim',
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+      color: OBJECT_DEFAULTS.trimColor,
+      visible: true,
+      vertices: [start, pt],
+      trimHeight: OBJECT_DEFAULTS.trimHeight,
+      trimThickness: OBJECT_DEFAULTS.trimThickness,
+    };
+    const cmd: Command = {
+      execute: () => set({ objects: [...get().objects.filter((o) => o.id !== id), obj], selectedIds: [id] }),
+      undo: () => set({ objects: get().objects.filter((o) => o.id !== id), selectedIds: get().selectedIds.filter((s) => s !== id) }),
+    };
+    cmd.execute();
+    get().pushCommand(cmd);
+    set({ trimVertices: [pt] });
+  },
+
+  cancelTrimDrawing: () => set(cancelAllDrawing()),
+
   /* ── Wall from edge ── */
 
   startDrawingWallEdge: () => {
@@ -368,7 +540,8 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
     const newIds: string[] = [];
 
     if (source.type === 'road' && source.vertices && source.vertices.length >= 2) {
-      const sides = computeRoadSidePoints(source.vertices, source.roadWidth ?? OBJECT_DEFAULTS.roadWidth);
+      const offsetVerts = applyPositionOffset(source.vertices, source.position);
+      const sides = computeRoadSidePoints(offsetVerts, source.roadWidth ?? OBJECT_DEFAULTS.roadWidth);
       for (const sideVerts of sides) {
         const id = uuid();
         newIds.push(id);
@@ -380,23 +553,8 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
         });
       }
     } else {
-      let verts: Vec3[];
-      if (source.type === 'polygon' && source.vertices && source.vertices.length >= 3) {
-        verts = source.vertices;
-      } else if (source.type === 'plane') {
-        const hs = 2;
-        const p = source.position;
-        const sx = source.scale.x;
-        const sz = source.scale.z;
-        verts = [
-          { x: p.x - hs * sx, y: 0, z: p.z - hs * sz },
-          { x: p.x + hs * sx, y: 0, z: p.z - hs * sz },
-          { x: p.x + hs * sx, y: 0, z: p.z + hs * sz },
-          { x: p.x - hs * sx, y: 0, z: p.z + hs * sz },
-        ];
-      } else {
-        return;
-      }
+      const verts = getEdgeVerts(source);
+      if (!verts) return;
 
       for (let i = 0; i < verts.length; i++) {
         const a = verts[i];
@@ -416,6 +574,64 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
       execute: () => {
         const existing = get().objects.filter((o) => !newIds.includes(o.id));
         set({ objects: [...existing, ...newWalls], selectedIds: newIds });
+      },
+      undo: () => {
+        set({
+          objects: get().objects.filter((o) => !newIds.includes(o.id)),
+          selectedIds: get().selectedIds.filter((s) => !newIds.includes(s)),
+        });
+      },
+    };
+    cmd.execute();
+    get().pushCommand(cmd);
+  },
+
+  createCliffsFromAllEdges: (objectId) => {
+    const source = get().objects.find((o) => o.id === objectId);
+    if (!source) return;
+
+    const height = OBJECT_DEFAULTS.cliffHeight;
+    const thickness = OBJECT_DEFAULTS.cliffThickness;
+    const newCliffs: LevelObject[] = [];
+    const newIds: string[] = [];
+
+    if (source.type === 'road' && source.vertices && source.vertices.length >= 2) {
+      const offsetVerts = applyPositionOffset(source.vertices, source.position);
+      const sides = computeRoadSidePoints(offsetVerts, source.roadWidth ?? OBJECT_DEFAULTS.roadWidth);
+      for (const sideVerts of sides) {
+        for (let i = 0; i < sideVerts.length - 1; i++) {
+          const id = uuid();
+          newIds.push(id);
+          newCliffs.push({
+            id, name: nextPrimitiveName('cliff'), type: 'cliff',
+            position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 },
+            color: OBJECT_DEFAULTS.cliffColor, visible: true,
+            vertices: [sideVerts[i], sideVerts[i + 1]], cliffHeight: height, cliffThickness: thickness,
+          });
+        }
+      }
+    } else {
+      const verts = getEdgeVerts(source);
+      if (!verts) return;
+
+      for (let i = 0; i < verts.length; i++) {
+        const a = verts[i];
+        const b = verts[(i + 1) % verts.length];
+        const id = uuid();
+        newIds.push(id);
+        newCliffs.push({
+          id, name: nextPrimitiveName('cliff'), type: 'cliff',
+          position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 },
+          color: OBJECT_DEFAULTS.cliffColor, visible: true,
+          vertices: [a, b], cliffHeight: height, cliffThickness: thickness,
+        });
+      }
+    }
+
+    const cmd: Command = {
+      execute: () => {
+        const existing = get().objects.filter((o) => !newIds.includes(o.id));
+        set({ objects: [...existing, ...newCliffs], selectedIds: newIds });
       },
       undo: () => {
         set({

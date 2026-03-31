@@ -7,8 +7,12 @@ import { EDITOR, SCENE_COLORS } from '../constants';
 import { renderDrawingPreview } from './DrawingMode';
 import { renderWallPreview } from './WallPreview';
 import { renderRoadPreview } from './RoadPreview';
+import { renderRampPreview } from './RampPreview';
+import { renderCliffPreview } from './CliffPreview';
+import { renderTrimPreview } from './TrimPreview';
 import { updatePlaceGhost, type PlaceGhost } from './PlaceMode';
 import { updateMeasurements } from './MeasureOverlay';
+import { updateFreeEdgeOverlay } from './FreeEdgeOverlay';
 import { syncMeshes, syncGizmo, syncGrid } from './MeshSync';
 import { stripGizmoExtras } from './GizmoHelper';
 import { clearGroup } from './threeUtils';
@@ -38,11 +42,96 @@ export function createInputHandler(ctx: SceneContext): InputContext {
   let marqueeDiv: HTMLDivElement | null = null;
   let prevOrbitKey = '';
 
+  // --- Fly mode (Unity-style RMB + WASD) ---
+  let flyActive = false;
+  let flyYaw = 0;
+  let flyPitch = 0;
+  const flyKeys = { w: false, a: false, s: false, d: false, q: false, e: false, shift: false };
+  const FLY_SPEED = 8;
+  const FLY_FAST = 24;
+  const FLY_SENSITIVITY = 0.003;
+
+  function onFlyKeyDown(e: KeyboardEvent) {
+    const k = e.key.toLowerCase();
+    if (k === 'w') flyKeys.w = true;
+    else if (k === 'a') flyKeys.a = true;
+    else if (k === 's') flyKeys.s = true;
+    else if (k === 'd') flyKeys.d = true;
+    else if (k === 'q') flyKeys.q = true;
+    else if (k === 'e') flyKeys.e = true;
+    if (e.key === 'Shift') flyKeys.shift = true;
+  }
+
+  function onFlyKeyUp(e: KeyboardEvent) {
+    const k = e.key.toLowerCase();
+    if (k === 'w') flyKeys.w = false;
+    else if (k === 'a') flyKeys.a = false;
+    else if (k === 's') flyKeys.s = false;
+    else if (k === 'd') flyKeys.d = false;
+    else if (k === 'q') flyKeys.q = false;
+    else if (k === 'e') flyKeys.e = false;
+    if (e.key === 'Shift') flyKeys.shift = false;
+  }
+
+  function startFly() {
+    if (flyActive) return;
+    flyActive = true;
+    orbitControls.enabled = false;
+    const cam = ctx.getCamera();
+    const dir = new THREE.Vector3();
+    cam.getWorldDirection(dir);
+    flyYaw = Math.atan2(dir.x, dir.z);
+    flyPitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+    window.addEventListener('keydown', onFlyKeyDown);
+    window.addEventListener('keyup', onFlyKeyUp);
+  }
+
+  function stopFly() {
+    if (!flyActive) return;
+    flyActive = false;
+    flyKeys.w = flyKeys.a = flyKeys.s = flyKeys.d = flyKeys.q = flyKeys.e = flyKeys.shift = false;
+    window.removeEventListener('keydown', onFlyKeyDown);
+    window.removeEventListener('keyup', onFlyKeyUp);
+
+    const cam = ctx.getCamera();
+    const dir = new THREE.Vector3();
+    cam.getWorldDirection(dir);
+    orbitControls.target.copy(cam.position).add(dir.multiplyScalar(5));
+    orbitControls.update();
+  }
+
+  function updateFly(dt: number) {
+    if (!flyActive) return;
+    const cam = ctx.getCamera();
+    const speed = (flyKeys.shift ? FLY_FAST : FLY_SPEED) * dt;
+
+    const forward = new THREE.Vector3(Math.sin(flyYaw) * Math.cos(flyPitch), Math.sin(flyPitch), Math.cos(flyYaw) * Math.cos(flyPitch));
+    const right = new THREE.Vector3(-Math.cos(flyYaw), 0, Math.sin(flyYaw));
+    const move = new THREE.Vector3();
+
+    if (flyKeys.w) move.add(forward);
+    if (flyKeys.s) move.sub(forward);
+    if (flyKeys.d) move.add(right);
+    if (flyKeys.a) move.sub(right);
+    if (flyKeys.e) move.y += 1;
+    if (flyKeys.q) move.y -= 1;
+
+    if (move.lengthSq() > 0) {
+      move.normalize().multiplyScalar(speed);
+      cam.position.add(move);
+      orbitControls.target.add(move);
+    }
+
+    const lookTarget = cam.position.clone().add(forward);
+    cam.lookAt(lookTarget);
+  }
+
   function syncOrbitButtons() {
     const state = useEditor.getState();
     const isSelect = state.transformMode === 'select';
-    const isTop = ctx.isTopView();
-    const key = `${isSelect ? 's' : 'n'}_${isTop ? 't' : 'p'}`;
+    const vm = ctx.getViewMode();
+    const isOrtho = vm !== 'perspective';
+    const key = `${isSelect ? 's' : 'n'}_${vm}`;
     if (key === prevOrbitKey) return;
     prevOrbitKey = key;
 
@@ -50,9 +139,9 @@ export function createInputHandler(ctx: SceneContext): InputContext {
       orbitControls.mouseButtons = {
         LEFT: -1 as THREE.MOUSE,
         MIDDLE: THREE.MOUSE.DOLLY,
-        RIGHT: isTop ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
+        RIGHT: isOrtho ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
       };
-    } else if (isTop) {
+    } else if (isOrtho) {
       orbitControls.mouseButtons = {
         LEFT: THREE.MOUSE.PAN,
         MIDDLE: THREE.MOUSE.DOLLY,
@@ -126,11 +215,29 @@ export function createInputHandler(ctx: SceneContext): InputContext {
     return hits.length > 0 ? hits[0].point : null;
   }
 
-  function getSnappedGround(): Vec3 | null {
-    const pt = getGroundPoint();
-    if (!pt) return null;
+  function getSnappedSurface(): Vec3 | null {
+    raycaster.setFromCamera(pointer, ctx.getCamera());
+    const meshes = Array.from(meshMap.values()).filter((m) => m.visible);
+    const meshHits = raycaster.intersectObjects(meshes, false);
+    const groundHits = raycaster.intersectObject(groundPlane);
+
+    type Hit = { point: THREE.Vector3; distance: number };
+    const candidates: Hit[] = [];
+
+    if (groundHits.length > 0) {
+      candidates.push({ point: groundHits[0].point, distance: groundHits[0].distance });
+    }
+    for (const mh of meshHits) {
+      candidates.push({ point: mh.point, distance: mh.distance });
+    }
+
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => a.distance - b.distance);
+    const best = candidates[0];
+
     const { gridSize, snapEnabled } = useEditor.getState();
-    return snapVec3({ x: pt.x, y: 0, z: pt.z }, gridSize, snapEnabled);
+    const snapped = snapVec3({ x: best.point.x, y: best.point.y, z: best.point.z }, gridSize, snapEnabled);
+    return snapped;
   }
 
   function updatePointer(e: { clientX: number; clientY: number }) {
@@ -145,6 +252,13 @@ export function createInputHandler(ctx: SceneContext): InputContext {
 
     const state = useEditor.getState();
     if (state.playMode) return;
+
+    if (flyActive) {
+      flyYaw -= e.movementX * FLY_SENSITIVITY;
+      flyPitch -= e.movementY * FLY_SENSITIVITY;
+      flyPitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, flyPitch));
+      return;
+    }
 
     if (marqueeActive) {
       marqueeEnd = { x: e.clientX, y: e.clientY };
@@ -184,6 +298,18 @@ export function createInputHandler(ctx: SceneContext): InputContext {
   };
 
   const onPointerDown = (e: PointerEvent) => {
+    if (e.button === 2) {
+      const state = useEditor.getState();
+      if (!state.playMode && ctx.getViewMode() === 'perspective') {
+        const isBusy = state.drawingPolygon || state.drawingWall || state.drawingRoad
+          || state.drawingWallEdge || state.drawingRamp || state.drawingCliff || state.drawingTrim || state.extruding;
+        if (!isBusy) {
+          startFly();
+          renderer.domElement.requestPointerLock();
+        }
+      }
+      return;
+    }
     if (e.button !== 0) return;
     updatePointer(e);
     const state = useEditor.getState();
@@ -196,7 +322,7 @@ export function createInputHandler(ctx: SceneContext): InputContext {
     }
     if (transformControls.dragging) return;
     const isBusy = state.drawingPolygon || state.drawingWall || state.drawingRoad
-      || state.drawingWallEdge || state.placingType || state.extruding;
+      || state.drawingWallEdge || state.drawingRamp || state.drawingCliff || state.drawingTrim || state.placingType || state.extruding;
     if (isBusy) return;
 
     const isSelectMode = state.transformMode === 'select';
@@ -221,6 +347,16 @@ export function createInputHandler(ctx: SceneContext): InputContext {
   };
 
   const onPointerUp = (e: PointerEvent) => {
+    if (e.button === 2) {
+      if (flyActive) {
+        stopFly();
+        if (document.pointerLockElement === renderer.domElement) {
+          document.exitPointerLock();
+        }
+        orbitControls.enabled = true;
+      }
+      return;
+    }
     if (e.button !== 0) return;
     if (marqueeActive) {
       if (marqueeDiv) {
@@ -248,7 +384,7 @@ export function createInputHandler(ctx: SceneContext): InputContext {
     if (state.extruding) { state.confirmExtrude(); return; }
 
     if (state.drawingPolygon) {
-      const pt = getSnappedGround();
+      const pt = getSnappedSurface();
       if (!pt) return;
       const verts = state.drawVertices;
       if (verts.length >= 3) {
@@ -265,14 +401,32 @@ export function createInputHandler(ctx: SceneContext): InputContext {
     }
 
     if (state.drawingWall) {
-      const pt = getSnappedGround();
+      const pt = getSnappedSurface();
       if (pt) state.addWallVertex(pt);
       return;
     }
 
     if (state.drawingRoad) {
-      const pt = getSnappedGround();
+      const pt = getSnappedSurface();
       if (pt) state.addRoadVertex(pt);
+      return;
+    }
+
+    if (state.drawingRamp) {
+      const pt = getSnappedSurface();
+      if (pt) state.addRampVertex(pt);
+      return;
+    }
+
+    if (state.drawingCliff) {
+      const pt = getSnappedSurface();
+      if (pt) state.addCliffVertex(pt);
+      return;
+    }
+
+    if (state.drawingTrim) {
+      const pt = getSnappedSurface();
+      if (pt) state.addTrimVertex(pt);
       return;
     }
 
@@ -282,8 +436,8 @@ export function createInputHandler(ctx: SceneContext): InputContext {
     }
 
     if (state.placingType) {
-      const pt = getGroundPoint();
-      if (pt) state.placeAt({ x: pt.x, y: pt.y, z: pt.z });
+      const pt = getSnappedSurface();
+      if (pt) state.placeAt(pt);
       return;
     }
 
@@ -292,7 +446,7 @@ export function createInputHandler(ctx: SceneContext): InputContext {
     const hits = raycaster.intersectObjects(meshes, false);
     if (hits.length > 0) {
       const id = hits[0].object.userData.levelObjectId;
-      if (id) state.select(id, e.shiftKey);
+      if (id) state.select(id, e.shiftKey, e.altKey);
     } else {
       state.select(null);
     }
@@ -329,12 +483,16 @@ export function createInputHandler(ctx: SceneContext): InputContext {
 
   const onRightClick = (e: MouseEvent) => {
     e.preventDefault();
+    if (flyActive) return;
     const state = useEditor.getState();
     if (state.playMode) return;
     if (state.extruding) state.cancelExtrude();
     else if (state.drawingPolygon) state.cancelDrawing();
     else if (state.drawingWall) state.cancelWallDrawing();
     else if (state.drawingRoad) state.cancelRoadDrawing();
+    else if (state.drawingRamp) state.cancelRampDrawing();
+    else if (state.drawingCliff) state.cancelCliffDrawing();
+    else if (state.drawingTrim) state.cancelTrimDrawing();
     else if (state.drawingWallEdge) state.cancelWallEdgeDrawing();
     else if (state.placingType) state.cancelPlacing();
   };
@@ -348,17 +506,19 @@ export function createInputHandler(ctx: SceneContext): InputContext {
 
   function syncScene() {
     const state = useEditor.getState();
-    const { objects, selectedIds, transformMode, gridSize, snapEnabled, showMeasurements, editingVertices } = state;
+    const { objects, selectedIds, transformMode, gridSize, snapEnabled, showMeasurements, editingVertices, floorY, floorIsolate } = state;
     const primaryId = selectedIds.length > 0 ? selectedIds[selectedIds.length - 1] : null;
 
-    syncMeshes(ctx, objects, selectedIds);
+    syncMeshes(ctx, objects, selectedIds, floorY, floorIsolate);
     if (editingVertices) {
       ctx.transformControls.detach();
     } else {
-      syncGizmo(ctx, primaryId, transformMode, snapEnabled, gridSize);
+      syncGizmo(ctx, primaryId, transformMode, snapEnabled, gridSize, objects);
     }
-    syncGrid(ctx, gridSize);
+    syncGrid(ctx, gridSize, floorY);
+    ctx.groundPlane.position.y = floorY;
     updateMeasurements(measureGroup, objects, selectedIds, showMeasurements);
+    updateFreeEdgeOverlay(ctx.freeEdgeGroup, objects, selectedIds);
   }
 
   const unsub = useEditor.subscribe(syncScene);
@@ -366,20 +526,24 @@ export function createInputHandler(ctx: SceneContext): InputContext {
 
   // --- Animation loop ---
   let animId = 0;
+  let lastFrameTime = performance.now();
   const animate = () => {
     animId = requestAnimationFrame(animate);
+    const now = performance.now();
+    const dt = Math.min((now - lastFrameTime) / 1000, 0.1);
+    lastFrameTime = now;
 
     const state = useEditor.getState();
 
     if (state.playMode) return;
 
+    updateFly(dt);
     syncOrbitButtons();
-    orbitControls.update();
+    if (!flyActive) orbitControls.update();
 
-    if (state.topView && !ctx.isTopView()) ctx.switchToTopView();
-    else if (!state.topView && ctx.isTopView()) ctx.switchToPerspective();
+    if (state.viewMode !== ctx.getViewMode()) ctx.setViewMode(state.viewMode);
 
-    const { placingType: placing, drawingPolygon: drawing, extruding, drawingWall, drawingRoad, drawingWallEdge } = state;
+    const { placingType: placing, drawingPolygon: drawing, extruding, drawingWall, drawingRoad, drawingWallEdge, drawingRamp, drawingCliff, drawingTrim } = state;
 
     if (extruding) {
       orbitControls.enabled = false;
@@ -389,30 +553,42 @@ export function createInputHandler(ctx: SceneContext): InputContext {
     clearGroup(drawGroup);
     if (drawing) {
       orbitControls.enabled = false;
-      renderDrawingPreview(drawGroup, state.drawVertices, getSnappedGround());
+      renderDrawingPreview(drawGroup, state.drawVertices, getSnappedSurface());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (drawingWall) {
       orbitControls.enabled = false;
-      renderWallPreview(drawGroup, state.wallVertices, getSnappedGround());
+      renderWallPreview(drawGroup, state.wallVertices, getSnappedSurface());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (drawingRoad) {
       orbitControls.enabled = false;
-      renderRoadPreview(drawGroup, state.roadVertices, getSnappedGround());
+      renderRoadPreview(drawGroup, state.roadVertices, getSnappedSurface());
+      renderer.domElement.style.cursor = 'crosshair';
+    } else if (drawingRamp) {
+      orbitControls.enabled = false;
+      renderRampPreview(drawGroup, state.rampVertices, getSnappedSurface());
+      renderer.domElement.style.cursor = 'crosshair';
+    } else if (drawingCliff) {
+      orbitControls.enabled = false;
+      renderCliffPreview(drawGroup, state.cliffVertices, getSnappedSurface());
+      renderer.domElement.style.cursor = 'crosshair';
+    } else if (drawingTrim) {
+      orbitControls.enabled = false;
+      renderTrimPreview(drawGroup, state.trimVertices, getSnappedSurface());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (drawingWallEdge) {
       orbitControls.enabled = false;
       renderEdgeHighlight(drawGroup, state, getGroundPoint());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (placing) {
-      ghost = updatePlaceGhost(ghost, scene, placing, getGroundPoint(), state.gridSize, state.snapEnabled);
+      ghost = updatePlaceGhost(ghost, scene, placing, getSnappedSurface());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (state.editingVertices) {
       vertexEditor.update(pointer);
       if (!vertexEditor.isDragging()) orbitControls.enabled = true;
       renderer.domElement.style.cursor = vertexEditor.isDragging() ? 'grabbing' : 'grab';
     } else {
-      if (!extruding) orbitControls.enabled = true;
-      ghost = updatePlaceGhost(ghost, scene, null, null, 0, false);
+      if (!extruding && !transformControls.dragging) orbitControls.enabled = true;
+      ghost = updatePlaceGhost(ghost, scene, null, null);
 
       raycaster.setFromCamera(pointer, ctx.getCamera());
       const meshes = Array.from(meshMap.values()).filter((m) => m.visible);
@@ -442,6 +618,7 @@ export function createInputHandler(ctx: SceneContext): InputContext {
   function dispose() {
     cancelAnimationFrame(animId);
     unsub();
+    stopFly();
     vertexEditor.dispose();
     renderer.domElement.removeEventListener('pointermove', onPointerMove);
     renderer.domElement.removeEventListener('pointerdown', onPointerDown);

@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useEditor } from '../store';
-import { streamChatMessage, type ChatMessage } from '../services/anthropicChat';
-import { generateOuterWalls } from '../services/autoWalls';
+import { requestLevelAction, type ChatMessage } from '../services/anthropicChat';
+import { executeActions } from '../services/actionExecutor';
+import { placeRoom } from '../services/proceduralPlacer';
 
 const API_KEY_STORAGE = 'graybox-anthropic-key';
 
@@ -15,18 +16,18 @@ export function ChatPanel() {
   const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) ?? '');
   const [showKey, setShowKey] = useState(false);
   const [messages, setMessages] = useState<DisplayMessage[]>([
-    { role: 'system', text: 'AI 레벨 디자인 어시스턴트입니다. 자연어로 레벨을 생성하세요.\n예: "5x5 방 3개를 복도로 연결해줘"' },
+    { role: 'system', text: 'AI 레벨 디자인 어시스턴트입니다.\n오브젝트 생성/수정/삭제를 자유롭게 요청하세요.\n예: "10x10 아레나 방 만들어줘" / "Starting Chamber 색 바꿔줘" / "램프 추가해서 2층 연결해줘"' },
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [streamText, setStreamText] = useState('');
-  const [streamObjCount, setStreamObjCount] = useState(0);
+  const [statusText, setStatusText] = useState('');
+  const chatHistoryRef = useRef<ChatMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
-  }, [messages, streamText]);
+  }, [messages, statusText]);
 
   useEffect(() => {
     if (chatOpen) inputRef.current?.focus();
@@ -48,54 +49,66 @@ export function ChatPanel() {
     setInput('');
     setMessages((m) => [...m, { role: 'user', text }]);
     setLoading(true);
-    setStreamText('');
-    setStreamObjCount(0);
+    setStatusText('AI가 레벨을 분석 중...');
+
+    chatHistoryRef.current.push({ role: 'user', content: text });
 
     try {
-      const history: ChatMessage[] = [
-        ...messages
-          .filter((m) => m.role === 'user' || m.role === 'assistant')
-          .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.text })),
-        { role: 'user' as const, content: text },
-      ];
+      setStatusText('AI가 설계 중...');
+      const response = await requestLevelAction(apiKey, chatHistoryRef.current);
 
-      const sceneObjects = useEditor.getState().objects;
-      const result = await streamChatMessage(
-        apiKey, history, sceneObjects,
-        (chunk) => { setStreamText(chunk); },
-        (obj) => {
-          useEditor.getState().streamAddObject(obj);
-          setStreamObjCount((c) => c + 1);
-        },
-      );
+      setStatusText('오브젝트 배치 중...');
 
-      setStreamText('');
+      const parts: string[] = [];
+      const stats: string[] = [];
 
-      const store = useEditor.getState();
-      const streamedPolygons = store.objects.filter(
-        (o) => store._streamedIds.includes(o.id) && o.type === 'polygon',
-      );
-      const autoWalls = generateOuterWalls(streamedPolygons);
-      for (const w of autoWalls) {
-        store.streamAddObject(w);
+      if (response.place_room) {
+        setStatusText('프로시저럴 배치 중...');
+        const state = useEditor.getState();
+        const selectedObj = state.selectedIds.length > 0
+          ? state.objects.find((o) => o.id === state.selectedIds[state.selectedIds.length - 1])
+          : null;
+
+        if (selectedObj) {
+          const placeResult = placeRoom(selectedObj, state.objects, response.place_room);
+          if (placeResult.objects.length > 0) {
+            for (const obj of placeResult.objects) {
+              useEditor.getState().streamAddObject(obj);
+            }
+            useEditor.getState().finalizeStream();
+            stats.push(`생성 ${placeResult.objects.length}`);
+          }
+          if (placeResult.message) parts.push(placeResult.message);
+        } else {
+          parts.push('오브젝트를 선택한 후 방 배치를 요청해주세요.');
+        }
       }
 
-      useEditor.getState().finalizeStream(result.remove);
+      if (response.actions.length > 0) {
+        const result = executeActions(response, (count, total) => {
+          setStatusText(`오브젝트 배치 중... (${count}/${total})`);
+        });
+        if (result.created > 0) stats.push(`생성 ${result.created}`);
+        if (result.updated > 0) stats.push(`수정 ${result.updated}`);
+        if (result.deleted > 0) stats.push(`삭제 ${result.deleted}`);
+        if (result.grouped > 0) stats.push(`그룹 ${result.grouped}`);
+      }
 
-      const floorCount = streamedPolygons.length;
-      const wallCount = autoWalls.length;
-      const summary = [];
-      if (result.remove.length > 0) summary.push(`${result.remove.length}개 삭제`);
-      if (floorCount > 0) summary.push(`바닥 ${floorCount}개`);
-      if (wallCount > 0) summary.push(`벽 ${wallCount}개 자동생성`);
-      const badge = summary.length > 0 ? ` [${summary.join(', ')}]` : '';
+      chatHistoryRef.current.push({
+        role: 'assistant',
+        content: JSON.stringify({ actions: response.actions, place_room: response.place_room, message: response.message }),
+      });
 
+      if (response.message && !parts.includes(response.message)) parts.push(response.message);
+      if (stats.length > 0) parts.push(`[${stats.join(', ')}]`);
+
+      setStatusText('');
       setMessages((m) => [...m, {
         role: 'assistant',
-        text: result.description + badge,
+        text: parts.join('\n') || '완료!',
       }]);
     } catch (err) {
-      setStreamText('');
+      setStatusText('');
       const store = useEditor.getState();
       if (store._streamedIds.length > 0) {
         const removeSet = new Set(store._streamedIds);
@@ -104,12 +117,20 @@ export function ChatPanel() {
           _streamedIds: [],
         });
       }
+      chatHistoryRef.current.pop();
       const msg = err instanceof Error ? err.message : 'Unknown error';
       setMessages((m) => [...m, { role: 'system', text: `오류: ${msg}` }]);
     } finally {
       setLoading(false);
     }
-  }, [input, loading, apiKey, messages]);
+  }, [input, loading, apiKey]);
+
+  const handleClear = useCallback(() => {
+    chatHistoryRef.current = [];
+    setMessages([
+      { role: 'system', text: '대화가 초기화되었습니다.' },
+    ]);
+  }, []);
 
   if (!chatOpen) return null;
 
@@ -117,13 +138,22 @@ export function ChatPanel() {
     <div style={styles.container}>
       <div style={styles.header}>
         <span style={{ fontWeight: 600, fontSize: 11, color: '#ddd' }}>AI Level Design</span>
-        <button
-          onClick={() => useEditor.getState().toggleChat()}
-          style={styles.closeBtn}
-          title="Close"
-        >
-          ×
-        </button>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <button
+            onClick={handleClear}
+            style={styles.clearBtn}
+            title="Clear conversation"
+          >
+            Clear
+          </button>
+          <button
+            onClick={() => useEditor.getState().toggleChat()}
+            style={styles.closeBtn}
+            title="Close"
+          >
+            x
+          </button>
+        </div>
       </div>
 
       <div style={styles.keyRow}>
@@ -135,7 +165,7 @@ export function ChatPanel() {
           style={styles.keyInput}
         />
         <button onClick={() => setShowKey(!showKey)} style={styles.eyeBtn}>
-          {showKey ? '🔓' : '🔒'}
+          {showKey ? 'O' : '*'}
         </button>
       </div>
 
@@ -145,9 +175,9 @@ export function ChatPanel() {
             {m.text}
           </div>
         ))}
-        {loading && (
+        {loading && statusText && (
           <div style={msgStyle('assistant')}>
-            {formatStream(streamText, streamObjCount)}
+            {statusText}
           </div>
         )}
       </div>
@@ -170,25 +200,11 @@ export function ChatPanel() {
             opacity: loading || !input.trim() ? 0.4 : 1,
           }}
         >
-          ▶
+          Go
         </button>
       </div>
     </div>
   );
-}
-
-function formatStream(raw: string, placedCount: number): string {
-  if (placedCount > 0) {
-    const descMatch = raw.match(/"description"\s*:\s*"([^"]*)/);
-    const desc = descMatch ? descMatch[1] : '';
-    return `${desc ? desc + '\n' : ''}오브젝트 ${placedCount}개 배치 완료...`;
-  }
-
-  const descMatch = raw.match(/"description"\s*:\s*"([^"]*)/);
-  if (descMatch) return descMatch[1] + '...';
-
-  if (!raw) return '생성 중...';
-  return '분석 중...';
 }
 
 function msgStyle(role: string): React.CSSProperties {
@@ -211,8 +227,8 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'absolute',
     bottom: 8,
     right: 8,
-    width: 360,
-    maxHeight: 480,
+    width: 380,
+    maxHeight: 520,
     display: 'flex',
     flexDirection: 'column',
     background: '#1e1e1e',
@@ -230,11 +246,21 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#252525',
     borderBottom: '1px solid #333',
   },
+  clearBtn: {
+    background: 'none',
+    border: '1px solid #555',
+    color: '#888',
+    fontSize: 9,
+    cursor: 'pointer',
+    padding: '2px 6px',
+    borderRadius: 3,
+    lineHeight: 1,
+  },
   closeBtn: {
     background: 'none',
     border: 'none',
     color: '#888',
-    fontSize: 16,
+    fontSize: 14,
     cursor: 'pointer',
     padding: '0 4px',
     lineHeight: 1,
@@ -260,7 +286,8 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     cursor: 'pointer',
     fontSize: 12,
-    padding: '0 2px',
+    padding: '0 4px',
+    color: '#888',
   },
   messageArea: {
     flex: 1,
@@ -270,7 +297,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 6,
     minHeight: 200,
-    maxHeight: 320,
+    maxHeight: 360,
   },
   inputRow: {
     display: 'flex',
@@ -295,11 +322,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     padding: '4px 10px',
     cursor: 'pointer',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 700,
-  },
-  dots: {
-    display: 'inline-block',
-    animation: 'pulse 1.5s infinite',
   },
 };

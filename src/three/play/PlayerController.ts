@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { PLAY } from '../../constants';
 import type { PhysicsWorld } from './PhysicsSimple';
+import type { PlayCameraMode } from '../../types';
+
+const ISO_MOVE_YAW = Math.PI / 4 + Math.PI;
 
 export interface KeyState {
   forward: boolean;
@@ -20,7 +23,7 @@ export interface PlayerController {
   yaw: number;
 
   setNavTarget(target: THREE.Vector3): void;
-  update(dt: number, keys: KeyState, cameraYaw: number, mode: '3rd' | '1st', physics: PhysicsWorld): void;
+  update(dt: number, keys: KeyState, cameraYaw: number, mode: PlayCameraMode, physics: PhysicsWorld): void;
   dispose(): void;
 }
 
@@ -60,12 +63,12 @@ export function createPlayerController(scene: THREE.Scene): PlayerController {
     dt: number,
     keys: KeyState,
     cameraYaw: number,
-    mode: '3rd' | '1st',
+    mode: PlayCameraMode,
     physics: PhysicsWorld,
   ) {
     const speed = PLAY.moveSpeed * (keys.sprint ? PLAY.sprintMultiplier : 1);
 
-    if (mode === '1st') {
+    if (mode === 'back') {
       _moveDir.set(0, 0, 0);
       if (keys.forward) _moveDir.z += 1;
       if (keys.backward) _moveDir.z -= 1;
@@ -78,6 +81,40 @@ export function createPlayerController(scene: THREE.Scene): PlayerController {
         velocity.x = _moveDir.x * speed;
         velocity.z = _moveDir.z * speed;
         yaw = Math.atan2(_moveDir.x, _moveDir.z);
+      } else {
+        velocity.x *= 0.85;
+        velocity.z *= 0.85;
+        if (Math.abs(velocity.x) < 0.01) velocity.x = 0;
+        if (Math.abs(velocity.z) < 0.01) velocity.z = 0;
+      }
+    } else if (mode === 'iso') {
+      _moveDir.set(0, 0, 0);
+      if (keys.forward) _moveDir.z += 1;
+      if (keys.backward) _moveDir.z -= 1;
+      if (keys.left) _moveDir.x += 1;
+      if (keys.right) _moveDir.x -= 1;
+
+      if (_moveDir.lengthSq() > 0) {
+        navTarget = null;
+        _moveDir.normalize();
+        _moveDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), ISO_MOVE_YAW);
+        velocity.x = _moveDir.x * speed;
+        velocity.z = _moveDir.z * speed;
+        yaw = Math.atan2(_moveDir.x, _moveDir.z);
+      } else if (navTarget) {
+        const toTarget = new THREE.Vector3().subVectors(navTarget, position);
+        toTarget.y = 0;
+        const dist = toTarget.length();
+        if (dist < 0.2) {
+          navTarget = null;
+          velocity.x *= 0.5;
+          velocity.z *= 0.5;
+        } else {
+          toTarget.normalize();
+          velocity.x = toTarget.x * PLAY.clickMoveSpeed;
+          velocity.z = toTarget.z * PLAY.clickMoveSpeed;
+          yaw = Math.atan2(toTarget.x, toTarget.z);
+        }
       } else {
         velocity.x *= 0.85;
         velocity.z *= 0.85;
