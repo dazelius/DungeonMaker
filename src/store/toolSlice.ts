@@ -5,6 +5,8 @@ import type { EditorState } from './types';
 import { nextPrimitiveName } from '../utils/naming';
 import { snapVec3 } from '../utils/math';
 import { OBJECT_DEFAULTS } from '../constants';
+import { computeRoadSidePoints } from '../three/primitiveGeometry';
+import { computeFreeEdges, worldVerts, type FreeEdge } from '../utils/freeEdge';
 
 export interface ToolSlice {
   placingType: PrimitiveType | null;
@@ -64,42 +66,121 @@ export interface ToolSlice {
   createCliffsFromAllEdges: (objectId: string) => void;
 }
 
-function computeRoadSidePoints(controlPoints: Vec3[], width: number): [Vec3[], Vec3[]] {
-  const n = controlPoints.length;
-  if (n < 2) return [[], []];
+const MERGE_EPS = 0.05;
 
-  const halfW = width / 2;
-  const inset = 0.5;
-  const left: Vec3[] = [];
-  const right: Vec3[] = [];
+function mergeConsecutiveEdges(freeEdges: FreeEdge[]): Vec3[][] {
+  if (freeEdges.length === 0) return [];
 
-  for (let i = 0; i < n; i++) {
-    let p = controlPoints[i];
-    let tx: number, tz: number;
-    if (i < n - 1) {
-      tx = controlPoints[i + 1].x - p.x;
-      tz = controlPoints[i + 1].z - p.z;
-    } else {
-      tx = p.x - controlPoints[i - 1].x;
-      tz = p.z - controlPoints[i - 1].z;
+  const used = new Array(freeEdges.length).fill(false);
+  const runs: Vec3[][] = [];
+
+  for (let start = 0; start < freeEdges.length; start++) {
+    if (used[start]) continue;
+    used[start] = true;
+    const chain: Vec3[] = [freeEdges[start].edgeFrom, freeEdges[start].edgeTo];
+
+    let extended = true;
+    while (extended) {
+      extended = false;
+      const tail = chain[chain.length - 1];
+      for (let j = 0; j < freeEdges.length; j++) {
+        if (used[j]) continue;
+        const ef = freeEdges[j].edgeFrom;
+        if (Math.abs(tail.x - ef.x) < MERGE_EPS && Math.abs(tail.z - ef.z) < MERGE_EPS) {
+          chain.push(freeEdges[j].edgeTo);
+          used[j] = true;
+          extended = true;
+          break;
+        }
+      }
     }
-    const tLen = Math.sqrt(tx * tx + tz * tz) || 1;
-    const tdx = tx / tLen;
-    const tdz = tz / tLen;
-
-    if (i === 0) {
-      p = { x: p.x + tdx * inset, y: p.y, z: p.z + tdz * inset };
-    } else if (i === n - 1) {
-      p = { x: p.x - tdx * inset, y: p.y, z: p.z - tdz * inset };
-    }
-
-    const nx = -tdz;
-    const nz = tdx;
-    left.push({ x: p.x + nx * halfW, y: p.y, z: p.z + nz * halfW });
-    right.push({ x: p.x - nx * halfW, y: p.y, z: p.z - nz * halfW });
+    runs.push(chain);
   }
+  return runs;
+}
 
-  return [left, right];
+function ptSegDist(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
+  const dx = bx - ax, dz = bz - az;
+  const lenSq = dx * dx + dz * dz;
+  if (lenSq < 1e-8) return Math.sqrt((px - ax) ** 2 + (pz - az) ** 2);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / lenSq));
+  return Math.sqrt((px - (ax + t * dx)) ** 2 + (pz - (az + t * dz)) ** 2);
+}
+
+function segSegDist(a1x: number, a1z: number, a2x: number, a2z: number,
+                    b1x: number, b1z: number, b2x: number, b2z: number): number {
+  return Math.min(
+    ptSegDist(a1x, a1z, b1x, b1z, b2x, b2z),
+    ptSegDist(a2x, a2z, b1x, b1z, b2x, b2z),
+    ptSegDist(b1x, b1z, a1x, a1z, a2x, a2z),
+    ptSegDist(b2x, b2z, a1x, a1z, a2x, a2z),
+  );
+}
+
+interface OtherEdge { ax: number; az: number; bx: number; bz: number }
+
+function collectOtherSurfaceEdges(source: LevelObject, allObjects: LevelObject[]): OtherEdge[] {
+  const edges: OtherEdge[] = [];
+  for (const other of allObjects) {
+    if (other.id === source.id) continue;
+    if (other.type === 'polygon' && other.vertices && other.vertices.length >= 3) {
+      const wv = worldVerts(other);
+      for (let i = 0; i < wv.length; i++) {
+        const a = wv[i], b = wv[(i + 1) % wv.length];
+        edges.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z });
+      }
+    }
+    if (other.type === 'road' && other.vertices && other.vertices.length >= 2) {
+      const wv = worldVerts(other);
+      const width = other.roadWidth ?? OBJECT_DEFAULTS.roadWidth;
+      const [left, right] = computeRoadSidePoints(wv, width);
+      for (const side of [left, right]) {
+        for (let i = 0; i < side.length - 1; i++) {
+          edges.push({ ax: side[i].x, az: side[i].z, bx: side[i + 1].x, bz: side[i + 1].z });
+        }
+      }
+    }
+    if (other.type === 'plane') {
+      const p = other.position;
+      const sx = other.scale.x * 2, sz = other.scale.z * 2;
+      const c = [
+        { x: p.x - sx, z: p.z - sz }, { x: p.x + sx, z: p.z - sz },
+        { x: p.x + sx, z: p.z + sz }, { x: p.x - sx, z: p.z + sz },
+      ];
+      for (let i = 0; i < 4; i++) {
+        edges.push({ ax: c[i].x, az: c[i].z, bx: c[(i + 1) % 4].x, bz: c[(i + 1) % 4].z });
+      }
+    }
+  }
+  return edges;
+}
+
+const ROAD_EDGE_THRESHOLD = 1.0;
+
+function filterFreeSegments(sideVerts: Vec3[], source: LevelObject, allObjects: LevelObject[]): Vec3[][] {
+  const otherEdges = collectOtherSurfaceEdges(source, allObjects);
+  const runs: Vec3[][] = [];
+  let current: Vec3[] = [];
+
+  for (let i = 0; i < sideVerts.length - 1; i++) {
+    const a = sideVerts[i];
+    const b = sideVerts[i + 1];
+    let blocked = false;
+    for (const e of otherEdges) {
+      if (segSegDist(a.x, a.z, b.x, b.z, e.ax, e.az, e.bx, e.bz) < ROAD_EDGE_THRESHOLD) {
+        blocked = true;
+        break;
+      }
+    }
+    if (blocked) {
+      if (current.length > 0) { runs.push(current); current = []; }
+    } else {
+      if (current.length === 0) current.push(a);
+      current.push(b);
+    }
+  }
+  if (current.length > 0) runs.push(current);
+  return runs;
 }
 
 function applyPositionOffset(verts: Vec3[], pos: Vec3): Vec3[] {
@@ -542,30 +623,33 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
     if (source.type === 'road' && source.vertices && source.vertices.length >= 2) {
       const offsetVerts = applyPositionOffset(source.vertices, source.position);
       const sides = computeRoadSidePoints(offsetVerts, source.roadWidth ?? OBJECT_DEFAULTS.roadWidth);
+      const allObjs = get().objects;
       for (const sideVerts of sides) {
-        const id = uuid();
-        newIds.push(id);
-        newWalls.push({
-          id, name: nextPrimitiveName('wall'), type: 'wall',
-          position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 },
-          color: OBJECT_DEFAULTS.wallColor, visible: true,
-          vertices: sideVerts, wallHeight: height, wallThickness: thickness,
-        });
+        const freeSegs = filterFreeSegments(sideVerts, source, allObjs);
+        for (const seg of freeSegs) {
+          const id = uuid();
+          newIds.push(id);
+          newWalls.push({
+            id, name: nextPrimitiveName('wall'), type: 'wall',
+            position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 },
+            color: OBJECT_DEFAULTS.wallColor, visible: true,
+            vertices: seg, wallHeight: height, wallThickness: thickness,
+          });
+        }
       }
     } else {
-      const verts = getEdgeVerts(source);
-      if (!verts) return;
+      const freeEdges = computeFreeEdges(source, get().objects);
+      if (freeEdges.length === 0) return;
 
-      for (let i = 0; i < verts.length; i++) {
-        const a = verts[i];
-        const b = verts[(i + 1) % verts.length];
+      const runs = mergeConsecutiveEdges(freeEdges);
+      for (const run of runs) {
         const id = uuid();
         newIds.push(id);
         newWalls.push({
           id, name: nextPrimitiveName('wall'), type: 'wall',
           position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 },
           color: OBJECT_DEFAULTS.wallColor, visible: true,
-          vertices: [a, b], wallHeight: height, wallThickness: thickness,
+          vertices: run, wallHeight: height, wallThickness: thickness,
         });
       }
     }
@@ -598,32 +682,34 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
     if (source.type === 'road' && source.vertices && source.vertices.length >= 2) {
       const offsetVerts = applyPositionOffset(source.vertices, source.position);
       const sides = computeRoadSidePoints(offsetVerts, source.roadWidth ?? OBJECT_DEFAULTS.roadWidth);
+      const allObjs = get().objects;
       for (const sideVerts of sides) {
-        for (let i = 0; i < sideVerts.length - 1; i++) {
+        const freeSegs = filterFreeSegments(sideVerts, source, allObjs);
+        for (const seg of freeSegs) {
+          if (seg.length < 2) continue;
           const id = uuid();
           newIds.push(id);
           newCliffs.push({
             id, name: nextPrimitiveName('cliff'), type: 'cliff',
             position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 },
             color: OBJECT_DEFAULTS.cliffColor, visible: true,
-            vertices: [sideVerts[i], sideVerts[i + 1]], cliffHeight: height, cliffThickness: thickness,
+            vertices: seg, cliffHeight: height, cliffThickness: thickness,
           });
         }
       }
     } else {
-      const verts = getEdgeVerts(source);
-      if (!verts) return;
+      const freeEdges = computeFreeEdges(source, get().objects);
+      if (freeEdges.length === 0) return;
 
-      for (let i = 0; i < verts.length; i++) {
-        const a = verts[i];
-        const b = verts[(i + 1) % verts.length];
+      const runs = mergeConsecutiveEdges(freeEdges);
+      for (const run of runs) {
         const id = uuid();
         newIds.push(id);
         newCliffs.push({
           id, name: nextPrimitiveName('cliff'), type: 'cliff',
           position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 },
           color: OBJECT_DEFAULTS.cliffColor, visible: true,
-          vertices: [a, b], cliffHeight: height, cliffThickness: thickness,
+          vertices: run, cliffHeight: height, cliffThickness: thickness,
         });
       }
     }

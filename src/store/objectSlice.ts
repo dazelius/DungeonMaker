@@ -12,11 +12,14 @@ export interface ObjectSlice {
   _batchSnapshots: LevelObject[];
   _streamedIds: string[];
   groupNames: Record<string, string>;
+  _clipboard: LevelObject[];
 
   addObject: (type: PrimitiveType) => string;
   removeObject: (id: string) => void;
   removeSelected: () => void;
   duplicateObject: (id: string) => string | null;
+  copySelected: () => void;
+  pasteClipboard: () => void;
   updateObject: (id: string, patch: Partial<LevelObject>) => void;
 
   beginBatch: (id: string) => void;
@@ -65,6 +68,7 @@ export const createObjectSlice: StateCreator<EditorState, [], [], ObjectSlice> =
   _batchSnapshots: [],
   _streamedIds: [],
   groupNames: {},
+  _clipboard: [],
 
   addObject: (type) => {
     const obj = makeObject(type, { x: 0, y: 0, z: 0 });
@@ -120,6 +124,41 @@ export const createObjectSlice: StateCreator<EditorState, [], [], ObjectSlice> =
     cmd.execute();
     get().pushCommand(cmd);
     return newId;
+  },
+
+  copySelected: () => {
+    const ids = get().selectedIds;
+    if (ids.length === 0) return;
+    const copies = get().objects.filter((o) => ids.includes(o.id)).map((o) => structuredClone(o));
+    set({ _clipboard: copies });
+  },
+
+  pasteClipboard: () => {
+    const clip = get()._clipboard;
+    if (clip.length === 0) return;
+    const offset = get().gridSize;
+    const newObjs: LevelObject[] = clip.map((src) => ({
+      ...structuredClone(src),
+      id: uuid(),
+      name: src.name + ' Copy',
+      position: { x: src.position.x + offset, y: src.position.y, z: src.position.z + offset },
+    }));
+    const newIds = newObjs.map((o) => o.id);
+    const cmd: Command = {
+      execute: () => {
+        const existing = get().objects.filter((o) => !newIds.includes(o.id));
+        set({ objects: [...existing, ...newObjs], selectedIds: newIds });
+      },
+      undo: () => {
+        set({
+          objects: get().objects.filter((o) => !newIds.includes(o.id)),
+          selectedIds: get().selectedIds.filter((s) => !newIds.includes(s)),
+        });
+      },
+    };
+    cmd.execute();
+    get().pushCommand(cmd);
+    set({ _clipboard: newObjs.map((o) => structuredClone(o)) });
   },
 
   updateObject: (id, patch) =>

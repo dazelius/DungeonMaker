@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useEditor } from '../store';
 import type { TransformMode } from '../types';
 import { btn, input, panel } from '../styles/theme';
@@ -25,13 +26,24 @@ export function Toolbar() {
     return pid ? s.objects.find((o) => o.id === pid) : undefined;
   });
   const chatOpen = useEditor((s) => s.chatOpen);
+  const projectName = useEditor((s) => s.projectName);
   const floorY = useEditor((s) => s.floorY);
   const floorIsolate = useEditor((s) => s.floorIsolate);
-  const { setTransformMode, toggleSnap, toggleMeasurements, setGridSize, setFloorY, floorUp, floorDown, toggleFloorIsolate, undo, redo, startExtruding, setViewMode, enterPlayMode, exitPlayMode, togglePlayCameraMode, toggleChat } = useEditor.getState();
+  const { setProjectName, setTransformMode, toggleSnap, toggleMeasurements, setGridSize, setFloorY, floorUp, floorDown, toggleFloorIsolate, undo, redo, startExtruding, setViewMode, enterPlayMode, exitPlayMode, togglePlayCameraMode, toggleChat } = useEditor.getState();
 
   return (
     <header style={panel.toolbar}>
-      <span style={{ fontWeight: 700, color: '#999', marginRight: 12, fontSize: 12, letterSpacing: 1.5 }}>GRAYBOX</span>
+      <span style={{ fontWeight: 700, color: '#999', marginRight: 4, fontSize: 12, letterSpacing: 1.5 }}>GRAYBOX</span>
+      <input
+        value={projectName}
+        onChange={(e) => setProjectName(e.target.value)}
+        style={{
+          background: 'transparent', border: 'none', borderBottom: '1px solid #555',
+          color: '#ccc', fontSize: 12, fontWeight: 600, width: 120, padding: '2px 4px',
+          outline: 'none', marginRight: 10,
+        }}
+        title="Project name (used for export filenames)"
+      />
 
       {!playMode && (
         <>
@@ -190,25 +202,132 @@ export function Toolbar() {
   );
 }
 
+let _savedDirHandle: FileSystemDirectoryHandle | null = null;
+let _dirHandleLoaded = false;
+
+const IDB_NAME = 'graybox-settings';
+const IDB_STORE = 'kv';
+const IDB_KEY = 'exportDirHandle';
+
+function openIDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveDirHandle(handle: FileSystemDirectoryHandle) {
+  const db = await openIDB();
+  const tx = db.transaction(IDB_STORE, 'readwrite');
+  tx.objectStore(IDB_STORE).put(handle, IDB_KEY);
+  db.close();
+}
+
+async function loadDirHandle(): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    const db = await openIDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      req.onsuccess = () => { db.close(); resolve(req.result ?? null); };
+      req.onerror = () => { db.close(); resolve(null); };
+    });
+  } catch { return null; }
+}
+
+(async () => {
+  const handle = await loadDirHandle();
+  if (handle) _savedDirHandle = handle;
+  _dirHandleLoaded = true;
+})();
+
+function showToast(msg: string) {
+  const div = document.createElement('div');
+  div.textContent = msg;
+  Object.assign(div.style, {
+    position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+    background: '#22c55e', color: '#000', padding: '8px 20px', borderRadius: '6px',
+    fontSize: '13px', fontWeight: '600', zIndex: '99999', pointerEvents: 'none',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+  });
+  document.body.appendChild(div);
+  setTimeout(() => div.remove(), 2000);
+}
+
+async function verifyPermission(dirHandle: FileSystemDirectoryHandle): Promise<boolean> {
+  const opts = { mode: 'readwrite' as const };
+  if (await (dirHandle as any).queryPermission(opts) === 'granted') return true;
+  if (await (dirHandle as any).requestPermission(opts) === 'granted') return true;
+  return false;
+}
+
+async function writeFileToDir(dirHandle: FileSystemDirectoryHandle, name: string, blob: Blob) {
+  const fh = await dirHandle.getFileHandle(name, { create: true });
+  const writable = await fh.createWritable();
+  await writable.write(blob);
+  await writable.close();
+}
+
 function ExportMenu() {
   const projectName = useEditor((s) => s.projectName);
+  const exportRef = useRef<(format: 'fbx') => void>();
+
+  useEffect(() => {
+    const handler = () => exportRef.current?.('fbx');
+    document.addEventListener('graybox-quick-save', handler);
+    return () => document.removeEventListener('graybox-quick-save', handler);
+  }, []);
+
+  const pickDir = async () => {
+    try {
+      const handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+      _savedDirHandle = handle;
+      await saveDirHandle(handle);
+    } catch { /* user cancelled */ }
+  };
 
   const handleExport = async (format: 'glb' | 'gltf' | 'obj' | 'fbx' | 'json') => {
-    const { downloadBlob } = await import('../utils/download');
-    if (format === 'json') {
-      const json = useEditor.getState().exportProjectJson();
-      downloadBlob(new Blob([json], { type: 'application/json' }), `${projectName}.json`);
-      return;
-    }
-    const { exportGLTF, exportOBJ, exportFBX, getViewportScene } = await import('../three/exporters');
-    const scene = getViewportScene();
-    if (!scene) return;
+    try {
+      const useDir = _savedDirHandle && await verifyPermission(_savedDirHandle);
+      const { downloadBlob } = await import('../utils/download');
 
-    if (format === 'glb') await exportGLTF(scene, `${projectName}.glb`, true);
-    else if (format === 'gltf') await exportGLTF(scene, `${projectName}.gltf`, false);
-    else if (format === 'obj') exportOBJ(scene, `${projectName}.obj`);
-    else if (format === 'fbx') exportFBX(scene, `${projectName}.fbx`);
+      if (format === 'json') {
+        const json = useEditor.getState().exportProjectJson();
+        if (useDir && _savedDirHandle) {
+          await writeFileToDir(_savedDirHandle, `${projectName}.json`, new Blob([json], { type: 'application/json' }));
+          showToast(`Saved ${projectName}.json → ${_savedDirHandle.name}/`);
+        } else {
+          downloadBlob(new Blob([json], { type: 'application/json' }), `${projectName}.json`);
+          showToast(`Downloaded ${projectName}.json`);
+        }
+        return;
+      }
+
+      const { exportGLTF, exportOBJ, exportFBX, exportFBXToDir, exportOBJToDir, getViewportScene } = await import('../three/exporters');
+      const scene = getViewportScene();
+      if (!scene) return;
+
+      if (useDir && _savedDirHandle) {
+        if (format === 'fbx') await exportFBXToDir(scene, projectName, _savedDirHandle);
+        else if (format === 'obj') await exportOBJToDir(scene, projectName, _savedDirHandle);
+        else if (format === 'glb') await exportGLTF(scene, `${projectName}.glb`, true);
+        else if (format === 'gltf') await exportGLTF(scene, `${projectName}.gltf`, false);
+        showToast(`Saved ${projectName}.${format} → ${_savedDirHandle.name}/`);
+      } else {
+        if (format === 'glb') await exportGLTF(scene, `${projectName}.glb`, true);
+        else if (format === 'gltf') await exportGLTF(scene, `${projectName}.gltf`, false);
+        else if (format === 'obj') exportOBJ(scene, `${projectName}.obj`);
+        else if (format === 'fbx') exportFBX(scene, `${projectName}.fbx`);
+        showToast(`Downloaded ${projectName}.${format}`);
+      }
+    } catch (err) {
+      showToast(`Export failed: ${(err as Error).message}`);
+    }
   };
+
+  exportRef.current = handleExport as any;
 
   const handleLoad = () => {
     const el = document.createElement('input');
@@ -226,10 +345,19 @@ function ExportMenu() {
     el.click();
   };
 
+  const dirLabel = _savedDirHandle ? `📂 ${_savedDirHandle.name}` : '📂 Set Path';
+
   return (
     <div style={{ display: 'flex', gap: 2 }}>
       <button onClick={handleLoad} style={btn.off}>Open</button>
       <button onClick={() => handleExport('json')} style={btn.off}>Save</button>
+      <button
+        onClick={pickDir}
+        style={{ ...btn.off, fontSize: 10, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        title={_savedDirHandle ? `Export path: ${_savedDirHandle.name}` : 'Set local export folder'}
+      >
+        {dirLabel}
+      </button>
       <button onClick={() => handleExport('glb')} style={btn.exportGreen}>GLB</button>
       <button onClick={() => handleExport('gltf')} style={btn.exportGreen}>glTF</button>
       <button onClick={() => handleExport('obj')} style={btn.exportTeal}>OBJ</button>

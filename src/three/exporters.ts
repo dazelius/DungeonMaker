@@ -31,6 +31,27 @@ export function exportFBX(scene: THREE.Scene, filename: string): void {
   downloadBlob(generateCheckerPNG(), texName);
 }
 
+export async function exportFBXToDir(scene: THREE.Scene, baseName: string, dirHandle: FileSystemDirectoryHandle): Promise<void> {
+  const texName = `${baseName}_checker.png`;
+  const fbx = buildFBXAscii(scene, texName);
+  await writeToDir(dirHandle, `${baseName}.fbx`, new Blob([fbx], { type: 'application/octet-stream' }));
+  await writeToDir(dirHandle, texName, generateCheckerPNG());
+}
+
+export async function exportOBJToDir(scene: THREE.Scene, baseName: string, dirHandle: FileSystemDirectoryHandle): Promise<void> {
+  const exporter = new OBJExporter();
+  const exportScene = buildExportScene(scene);
+  const result = exporter.parse(exportScene);
+  await writeToDir(dirHandle, `${baseName}.obj`, new Blob([result], { type: 'text/plain' }));
+}
+
+async function writeToDir(dirHandle: FileSystemDirectoryHandle, name: string, blob: Blob): Promise<void> {
+  const fh = await dirHandle.getFileHandle(name, { create: true });
+  const writable = await fh.createWritable();
+  await writable.write(blob);
+  await writable.close();
+}
+
 function buildExportScene(scene: THREE.Scene): THREE.Scene {
   const exportScene = new THREE.Scene();
   scene.traverse((child) => {

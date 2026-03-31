@@ -1,4 +1,6 @@
 import type { LevelObject, Vec3 } from '../types';
+import { computeRoadSidePoints } from '../three/primitiveGeometry';
+import { OBJECT_DEFAULTS } from '../constants';
 
 export interface Footprint {
   name: string;
@@ -80,31 +82,66 @@ function pointToSegDist(px: number, pz: number, ax: number, az: number, bx: numb
   return Math.sqrt((px - (ax + t * dx)) ** 2 + (pz - (az + t * dz)) ** 2);
 }
 
-function collectOtherVerts(obj: LevelObject, allObjects: LevelObject[]): Vec3[] {
-  const verts: Vec3[] = [];
-  const connectionTypes = new Set(['polygon', 'road', 'plane', 'ramp']);
-  for (const other of allObjects) {
-    if (other.id === obj.id) continue;
-    if (!connectionTypes.has(other.type)) continue;
-    const owv = worldVerts(other);
-    verts.push(...owv);
-    if (other.type === 'plane' && owv.length === 0) {
-      const fp = computeFootprint(other);
-      if (fp) {
-        const y = other.position.y;
-        verts.push(
-          { x: fp.minX, y, z: fp.minZ }, { x: fp.maxX, y, z: fp.minZ },
-          { x: fp.maxX, y, z: fp.maxZ }, { x: fp.minX, y, z: fp.maxZ },
-        );
-      }
+function pointInPoly2D(px: number, pz: number, verts: Vec3[]): boolean {
+  let inside = false;
+  for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+    const xi = verts[i].x, zi = verts[i].z;
+    const xj = verts[j].x, zj = verts[j].z;
+    if ((zi > pz) !== (zj > pz) && px < (xj - xi) * (pz - zi) / (zj - zi) + xi) {
+      inside = !inside;
     }
   }
-  return verts;
+  return inside;
 }
 
-function isEdgeBlocked(a: Vec3, b: Vec3, otherVerts: Vec3[]): boolean {
-  for (const v of otherVerts) {
-    if (pointToSegDist(v.x, v.z, a.x, a.z, b.x, b.z) < NEAR_THRESHOLD) return true;
+function pointNearPolyline(px: number, pz: number, chain: Vec3[], threshold: number): boolean {
+  for (let i = 0; i < chain.length - 1; i++) {
+    if (pointToSegDist(px, pz, chain[i].x, chain[i].z, chain[i + 1].x, chain[i + 1].z) < threshold) return true;
+  }
+  return false;
+}
+
+export function isEdgeCovered(a: Vec3, b: Vec3, srcObj: LevelObject, allObjects: LevelObject[]): boolean {
+  const SAMPLES = 5;
+  const connectionTypes = new Set(['polygon', 'road', 'plane', 'ramp']);
+
+  for (const other of allObjects) {
+    if (other.id === srcObj.id) continue;
+    if (!connectionTypes.has(other.type)) continue;
+
+    let hitCount = 0;
+    for (let s = 0; s < SAMPLES; s++) {
+      const t = (s + 1) / (SAMPLES + 1);
+      const px = a.x + (b.x - a.x) * t;
+      const pz = a.z + (b.z - a.z) * t;
+
+      if (other.type === 'polygon' && other.vertices && other.vertices.length >= 3) {
+        const wv = worldVerts(other);
+        if (pointInPoly2D(px, pz, wv)) hitCount++;
+        else if (nearPolyBoundary(px, pz, wv)) hitCount++;
+      } else if (other.type === 'road' && other.vertices && other.vertices.length >= 2) {
+        const wv = worldVerts(other);
+        const halfW = (other.roadWidth ?? OBJECT_DEFAULTS.roadWidth) / 2;
+        if (pointNearPolyline(px, pz, wv, halfW + NEAR_THRESHOLD)) hitCount++;
+      } else if (other.type === 'plane') {
+        const fp = computeFootprint(other);
+        if (fp && px >= fp.minX - NEAR_THRESHOLD && px <= fp.maxX + NEAR_THRESHOLD &&
+                  pz >= fp.minZ - NEAR_THRESHOLD && pz <= fp.maxZ + NEAR_THRESHOLD) hitCount++;
+      } else if (other.type === 'ramp' && other.vertices && other.vertices.length >= 2) {
+        const wv = worldVerts(other);
+        const halfW = (other.rampWidth ?? 2) / 2;
+        if (pointNearPolyline(px, pz, wv, halfW + NEAR_THRESHOLD)) hitCount++;
+      }
+    }
+    if (hitCount >= Math.ceil(SAMPLES / 2)) return true;
+  }
+  return false;
+}
+
+function nearPolyBoundary(px: number, pz: number, wv: Vec3[]): boolean {
+  for (let i = 0; i < wv.length; i++) {
+    const a = wv[i], b = wv[(i + 1) % wv.length];
+    if (pointToSegDist(px, pz, a.x, a.z, b.x, b.z) < NEAR_THRESHOLD) return true;
   }
   return false;
 }
@@ -131,6 +168,33 @@ export function computeFreeEdges(obj: LevelObject, allObjects: LevelObject[]): F
 
   if (wv.length < 3) return [];
   return computeFreeEdgesFromVerts(wv, wv[0].y, obj, allObjects);
+}
+
+function collectOtherVerts(obj: LevelObject, allObjects: LevelObject[]): Vec3[] {
+  const verts: Vec3[] = [];
+  const connectionTypes = new Set(['polygon', 'road', 'plane', 'ramp']);
+  for (const other of allObjects) {
+    if (other.id === obj.id) continue;
+    if (!connectionTypes.has(other.type)) continue;
+    const owv = worldVerts(other);
+    verts.push(...owv);
+    if (other.type === 'road' && other.vertices && other.vertices.length >= 2) {
+      const width = other.roadWidth ?? OBJECT_DEFAULTS.roadWidth;
+      const [left, right] = computeRoadSidePoints(owv, width);
+      verts.push(...left, ...right);
+    }
+    if (other.type === 'plane' && owv.length === 0) {
+      const fp = computeFootprint(other);
+      if (fp) {
+        const y = other.position.y;
+        verts.push(
+          { x: fp.minX, y, z: fp.minZ }, { x: fp.maxX, y, z: fp.minZ },
+          { x: fp.maxX, y, z: fp.maxZ }, { x: fp.minX, y, z: fp.maxZ },
+        );
+      }
+    }
+  }
+  return verts;
 }
 
 function computeFreeEdgesForLinear(
@@ -186,8 +250,6 @@ function computeFreeEdgesFromVerts(
   obj: LevelObject,
   allObjects: LevelObject[],
 ): FreeEdge[] {
-  const otherVerts = collectOtherVerts(obj, allObjects);
-
   let cx = 0, cz = 0;
   for (const v of wv) { cx += v.x; cz += v.z; }
   cx /= wv.length; cz /= wv.length;
@@ -203,7 +265,7 @@ function computeFreeEdgesFromVerts(
     const len = Math.sqrt(dx * dx + dz * dz);
     if (len < 0.5) continue;
 
-    if (isEdgeBlocked(a, b, otherVerts)) continue;
+    if (isEdgeCovered(a, b, obj, allObjects)) continue;
 
     let nx = -dz / len, nz = dx / len;
     const toCenterX = cx - mx, toCenterZ = cz - mz;

@@ -12,7 +12,7 @@ import { renderCliffPreview } from './CliffPreview';
 import { renderTrimPreview } from './TrimPreview';
 import { updatePlaceGhost, type PlaceGhost } from './PlaceMode';
 import { updateMeasurements } from './MeasureOverlay';
-import { updateFreeEdgeOverlay } from './FreeEdgeOverlay';
+// import { updateFreeEdgeOverlay } from './FreeEdgeOverlay';
 import { syncMeshes, syncGizmo, syncGrid } from './MeshSync';
 import { stripGizmoExtras } from './GizmoHelper';
 import { clearGroup } from './threeUtils';
@@ -188,14 +188,34 @@ export function createInputHandler(ctx: SceneContext): InputContext {
     const cam = ctx.getCamera();
     const ids: string[] = [];
     const projected = new THREE.Vector3();
+    const box = new THREE.Box3();
+    const corners = [
+      new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(),
+      new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(),
+    ];
     for (const [id, mesh] of meshMap) {
       if (!mesh.visible) continue;
-      projected.setFromMatrixPosition(mesh.matrixWorld);
-      projected.project(cam);
-      if (projected.x >= ndcLeft && projected.x <= ndcRight &&
-          projected.y >= ndcBottom && projected.y <= ndcTop) {
-        ids.push(id);
+      box.setFromObject(mesh);
+      if (box.isEmpty()) continue;
+      const { min, max } = box;
+      corners[0].set(min.x, min.y, min.z);
+      corners[1].set(max.x, min.y, min.z);
+      corners[2].set(min.x, max.y, min.z);
+      corners[3].set(max.x, max.y, min.z);
+      corners[4].set(min.x, min.y, max.z);
+      corners[5].set(max.x, min.y, max.z);
+      corners[6].set(min.x, max.y, max.z);
+      corners[7].set(max.x, max.y, max.z);
+      let hit = false;
+      for (const c of corners) {
+        projected.copy(c).project(cam);
+        if (projected.x >= ndcLeft && projected.x <= ndcRight &&
+            projected.y >= ndcBottom && projected.y <= ndcTop) {
+          hit = true;
+          break;
+        }
       }
+      if (hit) ids.push(id);
     }
 
     if (ids.length > 0) {
@@ -518,7 +538,7 @@ export function createInputHandler(ctx: SceneContext): InputContext {
     syncGrid(ctx, gridSize, floorY);
     ctx.groundPlane.position.y = floorY;
     updateMeasurements(measureGroup, objects, selectedIds, showMeasurements);
-    updateFreeEdgeOverlay(ctx.freeEdgeGroup, objects, selectedIds);
+    // updateFreeEdgeOverlay(ctx.freeEdgeGroup, objects, selectedIds);
   }
 
   const unsub = useEditor.subscribe(syncScene);

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { LevelObject } from '../types';
-import { createGeometry, createPolygonGeometry, createRoadGeometry, createWallGeometry, createCurvedWallGeometry, createRampGeometry, createCliffGeometry } from './primitiveGeometry';
+import { createGeometry, createPolygonGeometry, createRoadGeometry, createWallGeometry, createCurvedWallGeometry, createRampGeometry, createCliffGeometry, createCurvedCliffGeometry } from './primitiveGeometry';
 import { getCheckerTexture } from './checkerTexture';
 import { SCENE_COLORS, EDITOR, OBJECT_DEFAULTS } from '../constants';
 import type { SceneContext } from './SceneSetup';
@@ -182,6 +182,9 @@ function getGeometry(obj: LevelObject): THREE.BufferGeometry {
   }
   if (obj.type === 'ramp' && obj.vertices && obj.vertices.length === 2) {
     return createRampGeometry(obj.vertices[0], obj.vertices[1], obj.rampWidth ?? OBJECT_DEFAULTS.rampWidth, obj.rampHeight ?? OBJECT_DEFAULTS.rampHeight);
+  }
+  if (obj.type === 'cliff' && obj.vertices && obj.vertices.length >= 3) {
+    return createCurvedCliffGeometry(obj.vertices, obj.cliffHeight ?? OBJECT_DEFAULTS.cliffHeight, obj.cliffThickness ?? OBJECT_DEFAULTS.cliffThickness);
   }
   if (obj.type === 'cliff' && obj.vertices && obj.vertices.length === 2) {
     return createCliffGeometry(obj.vertices[0], obj.vertices[1], obj.cliffHeight ?? OBJECT_DEFAULTS.cliffHeight, obj.cliffThickness ?? OBJECT_DEFAULTS.cliffThickness);

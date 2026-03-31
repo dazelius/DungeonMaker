@@ -247,6 +247,35 @@ function deduplicateAdjacent(verts: Vec3[]): Vec3[] {
   return result;
 }
 
+export function computeRoadSidePoints(controlPoints: Vec3[], width: number): [Vec3[], Vec3[]] {
+  if (controlPoints.length < 2) return [[], []];
+
+  const pts3 = controlPoints.map((v) => new THREE.Vector3(v.x, v.y ?? 0, v.z));
+  const curve = new THREE.CatmullRomCurve3(pts3, false, 'catmullrom', 0.5);
+  const segCount = Math.max(2, (controlPoints.length - 1) * EDITOR.roadSegmentsPerPoint);
+  const samples = curve.getPoints(segCount);
+  const halfW = width / 2;
+
+  const left: Vec3[] = [];
+  const right: Vec3[] = [];
+
+  for (let i = 0; i < samples.length; i++) {
+    const p = samples[i];
+    let tangent: THREE.Vector3;
+    if (i < samples.length - 1) {
+      tangent = new THREE.Vector3().subVectors(samples[i + 1], p).normalize();
+    } else {
+      tangent = new THREE.Vector3().subVectors(p, samples[i - 1]).normalize();
+    }
+    const flatTangent = new THREE.Vector3(tangent.x, 0, tangent.z).normalize();
+    const normal = new THREE.Vector3(-flatTangent.z, 0, flatTangent.x);
+    left.push({ x: p.x + normal.x * halfW, y: p.y, z: p.z + normal.z * halfW });
+    right.push({ x: p.x - normal.x * halfW, y: p.y, z: p.z - normal.z * halfW });
+  }
+
+  return [left, right];
+}
+
 export function createRoadGeometry(controlPoints: Vec3[], width: number): THREE.BufferGeometry {
   if (controlPoints.length < 2) return new THREE.PlaneGeometry(width, 1);
 
@@ -354,6 +383,70 @@ export function createCliffGeometry(start: Vec3, end: Vec3, height: number, thic
   const transMatrix = new THREE.Matrix4().makeTranslation(cx, baseY, cz);
   geo.applyMatrix4(rotMatrix);
   geo.applyMatrix4(transMatrix);
+  return geo;
+}
+
+export function createCurvedCliffGeometry(
+  controlPoints: Vec3[],
+  height: number,
+  thickness: number,
+): THREE.BufferGeometry {
+  if (controlPoints.length < 2) return new THREE.BoxGeometry(0.1, height, thickness);
+
+  const pts3 = controlPoints.map((v) => new THREE.Vector3(v.x, v.y ?? 0, v.z));
+  const curve = new THREE.CatmullRomCurve3(pts3, false, 'catmullrom', 0.5);
+  const segCount = Math.max(2, (controlPoints.length - 1) * EDITOR.roadSegmentsPerPoint);
+  const samples = curve.getPoints(segCount);
+
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const uvs: number[] = [];
+  const halfT = thickness / 2;
+  let totalLen = 0;
+
+  for (let i = 0; i < samples.length; i++) {
+    const p = samples[i];
+    let tx: number, tz: number;
+    if (i < samples.length - 1) {
+      tx = samples[i + 1].x - p.x;
+      tz = samples[i + 1].z - p.z;
+    } else {
+      tx = p.x - samples[i - 1].x;
+      tz = p.z - samples[i - 1].z;
+    }
+    const len = Math.sqrt(tx * tx + tz * tz) || 1;
+    const nx = -tz / len * halfT;
+    const nz = tx / len * halfT;
+
+    if (i > 0) totalLen += p.distanceTo(samples[i - 1]);
+    const u = totalLen / 2;
+    const vTop = height / 2;
+    const baseY = p.y;
+
+    positions.push(p.x + nx, baseY - height, p.z + nz);  // outer bottom
+    positions.push(p.x + nx, baseY, p.z + nz);            // outer top
+    positions.push(p.x - nx, baseY - height, p.z - nz);   // inner bottom
+    positions.push(p.x - nx, baseY, p.z - nz);            // inner top
+
+    uvs.push(u, 0, u, vTop, u, 0, u, vTop);
+  }
+
+  for (let i = 0; i < samples.length - 1; i++) {
+    const base = i * 4;
+    const next = base + 4;
+    indices.push(base, next, base + 1);
+    indices.push(base + 1, next, next + 1);
+    indices.push(base + 2, base + 3, next + 2);
+    indices.push(base + 3, next + 3, next + 2);
+    indices.push(base + 1, next + 1, base + 3);
+    indices.push(base + 3, next + 1, next + 3);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
   return geo;
 }
 

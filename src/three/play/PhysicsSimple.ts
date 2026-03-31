@@ -93,6 +93,35 @@ function extractTopSurfaces(mesh: THREE.Mesh): TriSurface[] {
   return tris;
 }
 
+function subdivideIntoSegmentBoxes(mesh: THREE.Mesh, out: ColliderBox[]) {
+  const geo = mesh.geometry;
+  const posAttr = geo.getAttribute('position') as THREE.BufferAttribute;
+  if (!posAttr || posAttr.count < 8) {
+    const box = new THREE.Box3().setFromObject(mesh);
+    if (!box.isEmpty()) out.push({ min: box.min.clone(), max: box.max.clone() });
+    return;
+  }
+
+  mesh.updateMatrixWorld(true);
+  const wm = mesh.matrixWorld;
+  const v = new THREE.Vector3();
+  const VERTS_PER_SLICE = 4;
+  const sliceCount = Math.floor(posAttr.count / VERTS_PER_SLICE);
+
+  for (let s = 0; s < sliceCount - 1; s++) {
+    const segMin = new THREE.Vector3(Infinity, Infinity, Infinity);
+    const segMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    for (let vi = s * VERTS_PER_SLICE; vi < (s + 2) * VERTS_PER_SLICE && vi < posAttr.count; vi++) {
+      v.fromBufferAttribute(posAttr, vi).applyMatrix4(wm);
+      segMin.min(v);
+      segMax.max(v);
+    }
+    if (segMax.x > segMin.x && segMax.y > segMin.y && segMax.z > segMin.z) {
+      out.push({ min: segMin, max: segMax });
+    }
+  }
+}
+
 /* ── physics world ── */
 
 export function createPhysicsWorld(meshes: THREE.Mesh[], objects?: LevelObject[]): PhysicsWorld {
@@ -112,6 +141,16 @@ export function createPhysicsWorld(meshes: THREE.Mesh[], objects?: LevelObject[]
       }
     }
 
+    const wallCliffIds = new Set<string>();
+    if (objList) {
+      for (const obj of objList) {
+        if (!obj.visible) continue;
+        if ((obj.type === 'wall' || obj.type === 'cliff') && obj.vertices && obj.vertices.length >= 3) {
+          wallCliffIds.add(obj.id);
+        }
+      }
+    }
+
     const MIN_COLLIDER_THICKNESS = 0.3;
     const box = new THREE.Box3();
     for (const mesh of meshList) {
@@ -121,6 +160,11 @@ export function createPhysicsWorld(meshes: THREE.Mesh[], objects?: LevelObject[]
       if (id && rampIdSet.has(id)) {
         const surfs = extractTopSurfaces(mesh);
         rampSurfaces.push(...surfs);
+        continue;
+      }
+
+      if (id && wallCliffIds.has(id)) {
+        subdivideIntoSegmentBoxes(mesh, colliders);
         continue;
       }
 

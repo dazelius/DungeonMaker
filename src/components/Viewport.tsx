@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
+import * as THREE from 'three';
 import { useEditor } from '../store';
 import { createSceneContext, type SceneContext } from '../three/SceneSetup';
 import { createInputHandler, type InputContext } from '../three/InputHandler';
@@ -47,6 +48,28 @@ export function Viewport() {
       }
       return;
     }
+    if (e.key === 'f' || e.key === 'F') {
+      const scene = sceneRef.current;
+      if (scene && state.selectedIds.length > 0) {
+        const box = new THREE.Box3();
+        for (const id of state.selectedIds) {
+          const mesh = scene.meshMap.get(id);
+          if (mesh) box.expandByObject(mesh);
+        }
+        if (!box.isEmpty()) {
+          const center = box.getCenter(new THREE.Vector3());
+          const size = box.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z, 1);
+          const cam = scene.getCamera();
+          const dir = new THREE.Vector3();
+          cam.getWorldDirection(dir);
+          scene.orbitControls.target.copy(center);
+          cam.position.copy(center).addScaledVector(dir, -maxDim * 1.5);
+          scene.orbitControls.update();
+        }
+      }
+      return;
+    }
     if (e.key === 'v' || e.key === 'V') state.setTransformMode('select');
     if (e.key === 'w' || e.key === 'W' || e.key === 'g' || e.key === 'G') state.setTransformMode('translate');
     if (e.key === 'e' || e.key === 'E') state.setTransformMode('rotate');
@@ -62,6 +85,19 @@ export function Viewport() {
       if (state.drawingPolygon) state.redoDrawVertex();
       else if (state.drawingRoad) state.redoRoadVertex();
       else state.redo();
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault();
+      document.dispatchEvent(new CustomEvent('graybox-quick-save'));
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+      e.preventDefault();
+      state.copySelected();
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+      e.preventDefault();
+      state.pasteClipboard();
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
       e.preventDefault();

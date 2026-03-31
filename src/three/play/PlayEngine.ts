@@ -63,23 +63,31 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
     }
   }
 
-  let rightMouseDown = false;
+  let skipNextMove = false;
+  const MAX_MOVE = 80;
 
   function onMouseMove(e: MouseEvent) {
     if (!active || !cameraRig) return;
     const mode = useEditor.getState().playCameraMode;
-    if (mode === 'back' && rightMouseDown) {
-      cameraRig.onMouseMove(e.movementX, e.movementY);
+    if (mode === 'back' && document.pointerLockElement === ctx.renderer.domElement) {
+      if (skipNextMove) { skipNextMove = false; return; }
+      const dx = Math.max(-MAX_MOVE, Math.min(MAX_MOVE, e.movementX));
+      const dy = Math.max(-MAX_MOVE, Math.min(MAX_MOVE, e.movementY));
+      cameraRig.onMouseMove(dx, dy);
     }
   }
 
-  function onPointerDown(e: PointerEvent) {
+  function onPointerDown(_e: PointerEvent) {
     if (!active) return;
-    if (e.button === 2) rightMouseDown = true;
+    const mode = useEditor.getState().playCameraMode;
+    if (mode === 'back' && document.pointerLockElement !== ctx.renderer.domElement) {
+      skipNextMove = true;
+      ctx.renderer.domElement.requestPointerLock();
+    }
   }
 
-  function onPointerUp(e: PointerEvent) {
-    if (e.button === 2) rightMouseDown = false;
+  function onPointerUp() {
+    // no-op
   }
 
   function onClick(e: MouseEvent) {
@@ -113,7 +121,7 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
   }
 
   function onPointerLockChange() {
-    // no-op: back mode doesn't use pointer lock
+    // Pointer lock exited (e.g. ESC key) — no action needed, user clicks to re-lock
   }
 
   function enter() {
@@ -198,6 +206,10 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
     if (!player || !physics || !cameraRig) return;
 
     const mode = useEditor.getState().playCameraMode as PlayCameraMode;
+
+    if (mode !== 'back' && document.pointerLockElement === ctx.renderer.domElement) {
+      document.exitPointerLock();
+    }
 
     player.update(dt, keys, cameraRig.yaw, mode, physics);
     cameraRig.update(dt, player.position, mode);
