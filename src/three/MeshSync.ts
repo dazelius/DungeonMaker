@@ -141,6 +141,11 @@ export function syncGizmo(
 }
 
 export function syncGrid(ctx: SceneContext, gridSize: number, floorY = 0): void {
+  const target = ctx.orbitControls.target;
+  const snapStep = Math.max(gridSize, 1) * 20;
+  const cx = Math.round(target.x / snapStep) * snapStep;
+  const cz = Math.round(target.z / snapStep) * snapStep;
+
   const needsRebuild = ctx.gridHelper.userData.lastGrid !== gridSize;
   if (needsRebuild) {
     const extent = EDITOR.gridExtent;
@@ -149,12 +154,11 @@ export function syncGrid(ctx: SceneContext, gridSize: number, floorY = 0): void 
     ctx.scene.remove(ctx.gridHelper);
     const newGrid = new THREE.GridHelper(totalSize, divisions, SCENE_COLORS.gridCenter, SCENE_COLORS.grid);
     newGrid.userData.lastGrid = gridSize;
-    newGrid.position.y = floorY;
     ctx.scene.add(newGrid);
     ctx.gridHelper = newGrid;
-  } else if (ctx.gridHelper.position.y !== floorY) {
-    ctx.gridHelper.position.y = floorY;
   }
+  ctx.gridHelper.position.set(cx, floorY, cz);
+  ctx.groundPlane.position.set(cx, floorY, cz);
 }
 
 function getVertexHash(obj: LevelObject): string {
@@ -287,6 +291,103 @@ function getLabelPosition(obj: LevelObject): { x: number; y: number; z: number }
     return { x: cx + obj.position.x, y, z: cz + obj.position.z };
   }
   return { x: obj.position.x, y: obj.position.y + obj.scale.y + 0.5, z: obj.position.z };
+}
+
+export function syncFloorGuides(ctx: SceneContext, floorY: number, floorIsolate: boolean): void {
+  const RING_NAME = '__floorRing__';
+  const RULER_NAME = '__floorRuler__';
+
+  let ring = ctx.scene.getObjectByName(RING_NAME) as THREE.LineLoop | undefined;
+  if (!ring) {
+    const s = 30;
+    const geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-s, 0, -s), new THREE.Vector3(s, 0, -s),
+      new THREE.Vector3(s, 0, s), new THREE.Vector3(-s, 0, s),
+    ]);
+    ring = new THREE.LineLoop(geo, new THREE.LineBasicMaterial({ color: 0x7c3aed, opacity: 0.4, transparent: true }));
+    ring.name = RING_NAME;
+    ctx.scene.add(ring);
+  }
+  const target = ctx.orbitControls.target;
+  ring.position.set(target.x, floorY + 0.02, target.z);
+  ring.visible = floorIsolate;
+
+  let ruler = ctx.scene.getObjectByName(RULER_NAME) as THREE.Group | undefined;
+  if (!ruler) {
+    ruler = new THREE.Group();
+    ruler.name = RULER_NAME;
+    ctx.scene.add(ruler);
+  }
+
+  const prevKey = `${floorY}_${floorIsolate}`;
+  if (ruler.userData.lastKey === prevKey) return;
+  ruler.userData.lastKey = prevKey;
+
+  while (ruler.children.length) {
+    const c = ruler.children[0];
+    ruler.remove(c);
+    if ((c as any).geometry) (c as any).geometry.dispose();
+    if ((c as any).material) (c as any).material.dispose();
+    if (c instanceof CSS2DObject) c.element.remove();
+  }
+
+  if (!floorIsolate) return;
+
+  const RULER_X = -32;
+  const RULER_Z = -32;
+  const RANGE = 12;
+  const STEP = 3;
+
+  const vertGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(RULER_X, floorY - RANGE, RULER_Z),
+    new THREE.Vector3(RULER_X, floorY + RANGE, RULER_Z),
+  ]);
+  ruler.add(new THREE.Line(vertGeo, new THREE.LineBasicMaterial({ color: 0x444444 })));
+
+  const startY = Math.floor((floorY - RANGE) / STEP) * STEP;
+  for (let y = startY; y <= floorY + RANGE; y += STEP) {
+    const isCurrent = y === floorY;
+    const tickLen = isCurrent ? 3 : 1.5;
+    const tickGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(RULER_X, y, RULER_Z),
+      new THREE.Vector3(RULER_X + tickLen, y, RULER_Z),
+    ]);
+    ruler.add(new THREE.Line(tickGeo, new THREE.LineBasicMaterial({
+      color: isCurrent ? 0x7c3aed : 0x666666,
+    })));
+
+    const div = document.createElement('div');
+    div.textContent = `${y}m`;
+    Object.assign(div.style, {
+      color: isCurrent ? '#a78bfa' : '#888',
+      fontSize: isCurrent ? '12px' : '9px',
+      fontWeight: isCurrent ? '700' : '400',
+      fontFamily: 'monospace',
+      pointerEvents: 'none',
+      userSelect: 'none',
+    });
+    const label = new CSS2DObject(div);
+    label.position.set(RULER_X - 2, y, RULER_Z);
+    ruler.add(label);
+  }
+
+  if (floorY % STEP !== 0) {
+    const tickGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(RULER_X, floorY, RULER_Z),
+      new THREE.Vector3(RULER_X + 3, floorY, RULER_Z),
+    ]);
+    ruler.add(new THREE.Line(tickGeo, new THREE.LineBasicMaterial({ color: 0x7c3aed })));
+
+    const div = document.createElement('div');
+    div.textContent = `${floorY}m`;
+    Object.assign(div.style, {
+      color: '#a78bfa', fontSize: '12px', fontWeight: '700',
+      fontFamily: 'monospace', pointerEvents: 'none', userSelect: 'none',
+    });
+    const label = new CSS2DObject(div);
+    label.position.set(RULER_X - 2, floorY, RULER_Z);
+    ruler.add(label);
+  }
 }
 
 function applyTransform(mesh: THREE.Mesh, obj: LevelObject): void {

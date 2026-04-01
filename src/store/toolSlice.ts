@@ -27,7 +27,10 @@ export interface ToolSlice {
   cliffVertices: Vec3[];
   drawingTrim: boolean;
   trimVertices: Vec3[];
+  drawY: number;
 
+  drawYUp: () => void;
+  drawYDown: () => void;
   startPlacing: (type: PrimitiveType) => void;
   cancelPlacing: () => void;
   placeAt: (pos: Vec3) => string;
@@ -244,16 +247,19 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
   cliffVertices: [],
   drawingTrim: false,
   trimVertices: [],
+  drawY: 0,
 
+  drawYUp: () => set((s) => ({ drawY: s.drawY + 1 })),
+  drawYDown: () => set((s) => ({ drawY: s.drawY - 1 })),
   startPlacing: (type) => set({ ...cancelAllDrawing(), placingType: type }),
   cancelPlacing: () => set(cancelAllDrawing()),
 
-  startDrawingPolygon: () => set({ ...cancelAllDrawing(), drawingPolygon: true }),
+  startDrawingPolygon: () => set({ ...cancelAllDrawing(), drawingPolygon: true, drawY: get().floorY }),
 
   addDrawVertex: (pos) => {
-    const { gridSize, snapEnabled } = get();
+    const { gridSize, snapEnabled, drawY } = get();
     const snapped = snapVec3(pos, gridSize, snapEnabled);
-    set((s) => ({ drawVertices: [...s.drawVertices, { x: snapped.x, y: get().floorY, z: snapped.z }], drawRedoVertices: [] }));
+    set((s) => ({ drawVertices: [...s.drawVertices, { x: snapped.x, y: drawY, z: snapped.z }], drawRedoVertices: [] }));
   },
 
   undoDrawVertex: () => {
@@ -361,12 +367,12 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
 
   /* ── Wall (two-point) ── */
 
-  startDrawingWall: () => set({ ...cancelAllDrawing(), drawingWall: true }),
+  startDrawingWall: () => set({ ...cancelAllDrawing(), drawingWall: true, drawY: get().floorY }),
 
   addWallVertex: (pos) => {
-    const { gridSize, snapEnabled } = get();
+    const { gridSize, snapEnabled, drawY } = get();
     const snapped = snapVec3(pos, gridSize, snapEnabled);
-    const pt: Vec3 = { x: snapped.x, y: get().floorY, z: snapped.z };
+    const pt: Vec3 = { x: snapped.x, y: drawY, z: snapped.z };
     const prev = get().wallVertices;
     if (prev.length === 0) {
       set({ wallVertices: [pt] });
@@ -402,12 +408,12 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
 
   /* ── Road (spline) ── */
 
-  startDrawingRoad: () => set({ ...cancelAllDrawing(), drawingRoad: true }),
+  startDrawingRoad: () => set({ ...cancelAllDrawing(), drawingRoad: true, drawY: get().floorY }),
 
   addRoadVertex: (pos) => {
-    const { gridSize, snapEnabled } = get();
+    const { gridSize, snapEnabled, drawY } = get();
     const snapped = snapVec3(pos, gridSize, snapEnabled);
-    set((s) => ({ roadVertices: [...s.roadVertices, { x: snapped.x, y: get().floorY, z: snapped.z }], roadRedoVertices: [] }));
+    set((s) => ({ roadVertices: [...s.roadVertices, { x: snapped.x, y: drawY, z: snapped.z }], roadRedoVertices: [] }));
   },
 
   undoRoadVertex: () => {
@@ -460,7 +466,7 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
 
   /* ── Ramp (two-point) ── */
 
-  startDrawingRamp: () => set({ ...cancelAllDrawing(), drawingRamp: true }),
+  startDrawingRamp: () => set({ ...cancelAllDrawing(), drawingRamp: true, drawY: get().floorY }),
 
   addRampVertex: (pos) => {
     const { gridSize, snapEnabled } = get();
@@ -499,12 +505,12 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
 
   /* ── Cliff (two-point, wall going down) ── */
 
-  startDrawingCliff: () => set({ ...cancelAllDrawing(), drawingCliff: true }),
+  startDrawingCliff: () => set({ ...cancelAllDrawing(), drawingCliff: true, drawY: get().floorY }),
 
   addCliffVertex: (pos) => {
-    const { gridSize, snapEnabled } = get();
+    const { gridSize, snapEnabled, drawY } = get();
     const snapped = snapVec3(pos, gridSize, snapEnabled);
-    const pt: Vec3 = { x: snapped.x, y: get().floorY, z: snapped.z };
+    const pt: Vec3 = { x: snapped.x, y: drawY, z: snapped.z };
     const prev = get().cliffVertices;
     if (prev.length === 0) {
       set({ cliffVertices: [pt] });
@@ -538,12 +544,12 @@ export const createToolSlice: StateCreator<EditorState, [], [], ToolSlice> = (se
 
   /* ── Trim (two-point, low wide barrier wall) ── */
 
-  startDrawingTrim: () => set({ ...cancelAllDrawing(), drawingTrim: true }),
+  startDrawingTrim: () => set({ ...cancelAllDrawing(), drawingTrim: true, drawY: get().floorY }),
 
   addTrimVertex: (pos) => {
-    const { gridSize, snapEnabled } = get();
+    const { gridSize, snapEnabled, drawY } = get();
     const snapped = snapVec3(pos, gridSize, snapEnabled);
-    const pt: Vec3 = { x: snapped.x, y: get().floorY, z: snapped.z };
+    const pt: Vec3 = { x: snapped.x, y: drawY, z: snapped.z };
     const prev = get().trimVertices;
     if (prev.length === 0) {
       set({ trimVertices: [pt] });

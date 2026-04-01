@@ -144,6 +144,10 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
     ctx.drawGroup.visible = false;
     ctx.measureGroup.visible = false;
     ctx.gridHelper.visible = false;
+    const floorRing = ctx.scene.getObjectByName('__floorRing__');
+    const floorRuler = ctx.scene.getObjectByName('__floorRuler__');
+    if (floorRing) floorRing.visible = false;
+    if (floorRuler) floorRuler.visible = false;
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
@@ -189,6 +193,10 @@ export function createPlayEngine(ctx: SceneContext): PlayContext {
     ctx.drawGroup.visible = true;
     ctx.measureGroup.visible = true;
     ctx.gridHelper.visible = true;
+    const floorRing2 = ctx.scene.getObjectByName('__floorRing__');
+    const floorRuler2 = ctx.scene.getObjectByName('__floorRuler__');
+    if (floorRing2) floorRing2.visible = true;
+    if (floorRuler2) floorRuler2.visible = true;
   }
 
   function resetKeys() {

@@ -13,7 +13,7 @@ import { renderTrimPreview } from './TrimPreview';
 import { updatePlaceGhost, type PlaceGhost } from './PlaceMode';
 import { updateMeasurements } from './MeasureOverlay';
 // import { updateFreeEdgeOverlay } from './FreeEdgeOverlay';
-import { syncMeshes, syncGizmo, syncGrid } from './MeshSync';
+import { syncMeshes, syncGizmo, syncGrid, syncFloorGuides } from './MeshSync';
 import { stripGizmoExtras } from './GizmoHelper';
 import { clearGroup } from './threeUtils';
 import { createVertexEditor } from './VertexEditor';
@@ -536,7 +536,7 @@ export function createInputHandler(ctx: SceneContext): InputContext {
       syncGizmo(ctx, primaryId, transformMode, snapEnabled, gridSize, objects);
     }
     syncGrid(ctx, gridSize, floorY);
-    ctx.groundPlane.position.y = floorY;
+    syncFloorGuides(ctx, floorY, floorIsolate);
     updateMeasurements(measureGroup, objects, selectedIds, showMeasurements);
     // updateFreeEdgeOverlay(ctx.freeEdgeGroup, objects, selectedIds);
   }
@@ -571,29 +571,35 @@ export function createInputHandler(ctx: SceneContext): InputContext {
     }
 
     clearGroup(drawGroup);
+    const isAnyDrawing = drawing || drawingWall || drawingRoad || drawingRamp || drawingCliff || drawingTrim;
+    function getDrawCursor(): Vec3 | null {
+      const pt = getSnappedSurface();
+      if (pt && isAnyDrawing) pt.y = state.drawY;
+      return pt;
+    }
     if (drawing) {
       orbitControls.enabled = false;
-      renderDrawingPreview(drawGroup, state.drawVertices, getSnappedSurface());
+      renderDrawingPreview(drawGroup, state.drawVertices, getDrawCursor());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (drawingWall) {
       orbitControls.enabled = false;
-      renderWallPreview(drawGroup, state.wallVertices, getSnappedSurface());
+      renderWallPreview(drawGroup, state.wallVertices, getDrawCursor());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (drawingRoad) {
       orbitControls.enabled = false;
-      renderRoadPreview(drawGroup, state.roadVertices, getSnappedSurface());
+      renderRoadPreview(drawGroup, state.roadVertices, getDrawCursor());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (drawingRamp) {
       orbitControls.enabled = false;
-      renderRampPreview(drawGroup, state.rampVertices, getSnappedSurface());
+      renderRampPreview(drawGroup, state.rampVertices, getDrawCursor());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (drawingCliff) {
       orbitControls.enabled = false;
-      renderCliffPreview(drawGroup, state.cliffVertices, getSnappedSurface());
+      renderCliffPreview(drawGroup, state.cliffVertices, getDrawCursor());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (drawingTrim) {
       orbitControls.enabled = false;
-      renderTrimPreview(drawGroup, state.trimVertices, getSnappedSurface());
+      renderTrimPreview(drawGroup, state.trimVertices, getDrawCursor());
       renderer.domElement.style.cursor = 'crosshair';
     } else if (drawingWallEdge) {
       orbitControls.enabled = false;

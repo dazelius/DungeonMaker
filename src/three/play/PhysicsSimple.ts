@@ -138,6 +138,10 @@ export function createPhysicsWorld(meshes: THREE.Mesh[], objects?: LevelObject[]
       for (const obj of objList) {
         if (!obj.visible) continue;
         if (obj.type === 'ramp') rampIdSet.add(obj.id);
+        if (obj.type === 'road') rampIdSet.add(obj.id);
+        if (obj.type === 'polygon' && !(obj.extrudeHeight && obj.extrudeHeight > 0)) {
+          rampIdSet.add(obj.id);
+        }
       }
     }
 
@@ -252,16 +256,18 @@ export function createPhysicsWorld(meshes: THREE.Mesh[], objects?: LevelObject[]
     for (const tri of rampSurfaces) {
       const surfY = surfaceYAtXZ(pos.x, pos.z, tri);
       if (surfY === null) continue;
+      if (surfY > pos.y + 2.0) continue;
       if (bestRampY === null || surfY > bestRampY) bestRampY = surfY;
     }
 
     if (bestRampY !== null) {
       const diff = bestRampY - pos.y;
-      if (diff >= 0 && diff < STEP_HEIGHT) {
+      const followRange = (grounded || wasGrounded) ? 2.0 : STEP_HEIGHT;
+      if (diff >= 0 && diff < followRange) {
         pos.y = bestRampY;
         if (vel.y < 0) vel.y = 0;
         grounded = true;
-      } else if (diff < 0 && diff > -STEP_HEIGHT && (grounded || wasGrounded)) {
+      } else if (diff < 0 && diff > -followRange) {
         pos.y = bestRampY;
         if (vel.y < 0) vel.y = 0;
         grounded = true;

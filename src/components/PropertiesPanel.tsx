@@ -21,61 +21,72 @@ export function PropertiesPanel() {
     );
   }
 
-  if (selectedIds.length > 1) {
-    return (
-      <div style={{ padding: 12 }}>
-        <div style={{ fontSize: 11, color: '#aaa', fontWeight: 500, marginBottom: 8 }}>
-          {selectedIds.length} objects selected
-        </div>
-        <button
-          onClick={removeSelected}
-          style={{ ...btn.danger, width: '100%' }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = btn.dangerHover; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = '#7f1d1d'; }}
-        >
-          Delete All Selected
-        </button>
-      </div>
-    );
-  }
+  const selectedObjs = selectedIds.map((id) => objects.find((o) => o.id === id)).filter(Boolean) as typeof objects;
+  const allSameType = selectedObjs.every((o) => o.type === obj.type);
+  const isMulti = selectedIds.length > 1;
 
-  const patch = (field: string, value: unknown) => updateObject(obj.id, { [field]: value });
+  const patch = (field: string, value: unknown) => {
+    if (isMulti) {
+      for (const o of selectedObjs) updateObject(o.id, { [field]: value });
+    } else {
+      updateObject(obj.id, { [field]: value });
+    }
+  };
+
+  const showType = allSameType ? obj.type : 'mixed';
 
   return (
     <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div>
-        <label style={labelStyle.section}>Name</label>
-        <input
-          value={obj.name}
-          onChange={(e) => patch('name', e.target.value)}
-          style={inputStyle.base}
-        />
-      </div>
+      {isMulti && (
+        <div style={{
+          fontSize: 11, color: '#a78bfa', fontWeight: 600, marginBottom: -4,
+          background: 'rgba(124,58,237,0.15)', borderRadius: 4, padding: '4px 8px',
+        }}>
+          {selectedIds.length} {allSameType ? obj.type + 's' : 'objects'} selected
+        </div>
+      )}
 
-      <div>
-        <label style={labelStyle.section}>Type</label>
-        <span style={{ color: '#bbb', textTransform: 'capitalize', fontSize: 11 }}>{obj.type}</span>
-      </div>
+      {!isMulti && (
+        <>
+          <div>
+            <label style={labelStyle.section}>Name</label>
+            <input
+              value={obj.name}
+              onChange={(e) => patch('name', e.target.value)}
+              style={inputStyle.base}
+            />
+          </div>
+          <div>
+            <label style={labelStyle.section}>Type</label>
+            <span style={{ color: '#bbb', textTransform: 'capitalize', fontSize: 11 }}>{obj.type}</span>
+          </div>
+          <Vec3Input label="Position" value={obj.position} onChange={(v) => patch('position', v)} step={0.25} />
+          <Vec3Input label="Rotation" value={obj.rotation} onChange={(v) => patch('rotation', v)} step={15} />
+          <Vec3Input label="Scale" value={obj.scale} onChange={(v) => patch('scale', v)} step={0.25} min={0.01} />
+        </>
+      )}
 
-      <Vec3Input label="Position" value={obj.position} onChange={(v) => patch('position', v)} step={0.25} />
-      <Vec3Input label="Rotation" value={obj.rotation} onChange={(v) => patch('rotation', v)} step={15} />
-      <Vec3Input label="Scale" value={obj.scale} onChange={(v) => patch('scale', v)} step={0.25} min={0.01} />
-
-      {obj.type === 'polygon' ? (
+      {showType === 'polygon' ? (
         <HeightControl
           label="Extrude Height"
           value={obj.extrudeHeight ?? 0}
           onChange={(h) => patch('extrudeHeight', h)}
         />
-      ) : (
+      ) : !isMulti ? (
         <HeightControl
           label="Height (Y)"
           value={obj.scale.y}
-          onChange={(h) => patch('scale', { ...obj.scale, y: Math.max(0.01, h) })}
+          onChange={(h) => {
+            if (isMulti) {
+              for (const o of selectedObjs) updateObject(o.id, { scale: { ...o.scale, y: Math.max(0.01, h) } });
+            } else {
+              patch('scale', { ...obj.scale, y: Math.max(0.01, h) });
+            }
+          }}
         />
-      )}
+      ) : null}
 
-      {obj.type === 'ramp' && (
+      {showType === 'ramp' && (
         <>
           <HeightControl
             label="Ramp Height"
@@ -90,7 +101,7 @@ export function PropertiesPanel() {
         </>
       )}
 
-      {obj.type === 'cliff' && (
+      {showType === 'cliff' && (
         <>
           <HeightControl
             label="Cliff Depth"
@@ -117,7 +128,7 @@ export function PropertiesPanel() {
         </>
       )}
 
-      {obj.type === 'trim' && (
+      {showType === 'trim' && (
         <>
           <HeightControl
             label="Trim Height"
@@ -144,7 +155,7 @@ export function PropertiesPanel() {
         </>
       )}
 
-      {obj.type === 'wall' && (
+      {showType === 'wall' && (
         <>
           <HeightControl
             label="Wall Height"
@@ -176,7 +187,7 @@ export function PropertiesPanel() {
         </>
       )}
 
-      {obj.type === 'road' && (
+      {showType === 'road' && (
         <div>
           <label style={labelStyle.section}>Road Width</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -218,7 +229,7 @@ export function PropertiesPanel() {
         </div>
       </div>
 
-      {obj.vertices && obj.vertices.length >= 2 && (
+      {!isMulti && obj.vertices && obj.vertices.length >= 2 && (
         <button
           onClick={() => {
             const s = useEditor.getState();
@@ -236,7 +247,7 @@ export function PropertiesPanel() {
         </button>
       )}
 
-      {(obj.type === 'polygon' || obj.type === 'plane' || obj.type === 'road') && (
+      {!isMulti && (obj.type === 'polygon' || obj.type === 'plane' || obj.type === 'road') && (
         <div style={{ display: 'flex', gap: 4 }}>
           <button
             onClick={() => useEditor.getState().createWallsFromAllEdges(obj.id)}
@@ -256,21 +267,23 @@ export function PropertiesPanel() {
       )}
 
       <div style={{ display: 'flex', gap: 4, paddingTop: 4 }}>
-        <button
-          onClick={() => duplicateObject(obj.id)}
-          style={{ ...btn.neutral, flex: 1 }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = btn.neutralHover; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = '#333'; }}
-        >
-          Duplicate
-        </button>
+        {!isMulti && (
+          <button
+            onClick={() => duplicateObject(obj.id)}
+            style={{ ...btn.neutral, flex: 1 }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = btn.neutralHover; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = '#333'; }}
+          >
+            Duplicate
+          </button>
+        )}
         <button
           onClick={removeSelected}
           style={{ ...btn.danger, flex: 1 }}
           onMouseEnter={(e) => { e.currentTarget.style.background = btn.dangerHover; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = '#7f1d1d'; }}
         >
-          Delete
+          Delete{isMulti ? ' All' : ''}
         </button>
       </div>
     </div>
